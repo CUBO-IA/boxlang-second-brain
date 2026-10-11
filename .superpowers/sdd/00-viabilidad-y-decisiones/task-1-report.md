@@ -4,17 +4,35 @@
 
 **Estado de fase: Bloqueada; pendiente de verificación independiente.** No se declara verificada ninguna puerta que requiera ejecución real o evidencia no disponible. Se respetó el Compose separado `second-brain-phase00` y no se efectuó ninguna llamada externa: no hay clave OpenAI configurada y el harness no se usa como credencial. No se crearon tablas de aplicación ni se tocaron volúmenes del proyecto original.
 
-Revisión base: `844463a` (`docs: add second brain product specification`). Branch: `phase00-viability`. Módulos fijados en el descriptor: `bx-ai 3.5.0`, `bx-postgresql 1.2.0`; PostgreSQL declarado por imagen `pgvector/pgvector:0.8.7-pg17`; Next.js declarado `16.4.0`. Son versiones declaradas, no versiones efectivamente observadas. Revisar `git rev-parse HEAD` tras commit para la revisión de entrega.
+Revisión base: `844463a` (`docs: add second brain product specification`). Branch: `phase00-viability`. Revisión de implementación: `5b8ec39` más el commit de corrección/documentación siguiente. Versiones efectivas observadas: BoxLang `1.18.0+66`; PostgreSQL `17.11`; extensión pgvector `0.8.7`; Next.js `16.4.0`. Descriptor fija `bx-ai 3.5.0` y `bx-postgresql 1.2.0`, pero no se logró obtener sus versiones activas del runtime (módulos constan activos según smoke). Docker construyó imágenes e inició los tres servicios del proyecto aislado `second-brain-phase00` en puertos 3001/8081/55434; volumen dedicado `second-brain-phase00_postgres_data`.
 
 ## Comandos y evidencia
 
-Se solicitó levantar infraestructura aislada con:
+Compose aislado terminó correctamente con:
 
 ```sh
 FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 up -d --build
 ```
 
-Ejecución iniciada en segundo plano; salida/resultado final: pendiente de confirmación del harness. Comandos de comprobación previstos (no atribuir éxito hasta ejecutarlos):
+Salida: imágenes frontend/boxlang construidas; red y volumen `second-brain-phase00` creados; Postgres healthy, BoxLang healthy y frontend started. La prueba de contrato pasó; `git diff --check` pasó. Smoke:
+
+```text
+OK: Second Brain, BoxLang AI, PostgreSQL y pgvector disponibles.
+```
+
+HTTP:
+
+```text
+OK: GET BoxLang, rechazo de POST y conexión desde Next.js.
+```
+
+Probe vectorial:
+
+```text
+OK: pre-retrieval space/document filters; replacement metadata; deletion; sibling preserved
+```
+
+La primera ejecución del probe falló por resolución de clase y sintaxis/parámetros SQL; se corrigió añadiendo classPath del backend, `jsonb_build_object`, `IN` enlazado y `CAST(... AS vector)`. El resultado final citado es la ejecución posterior exitosa. El fallo anterior no se oculta.
 
 ```sh
 FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec boxlang boxlang tests/smoke.bxs
@@ -23,7 +41,7 @@ FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p secon
 node tests/contracts.mjs
 ```
 
-Las pruebas existentes `tests/smoke.bxs` y `tests/http.mjs` se conservaron sin cambios. La prueba BoxLang `tests/probe.bxs` crea una tabla temporal de sesión de nombre aleatorio y comprueba filtro de espacio + documentos dentro de la consulta, reemplazo de metadatos, borrado y conservación del documento hermano. Solo prueba pgvector PostgreSQL directamente, no bx-ai Memory API. Ejecutar dentro del contenedor con el datasource configurado. `node tests/contracts.mjs` pasó localmente: `OK: deterministic fixture location contract and repeated-value content assertions`. `git diff --check` también pasó. No se atribuye salida aún a Compose, smoke/http o probe BoxLang.
+Las pruebas existentes `tests/smoke.bxs` y `tests/http.mjs` se conservaron sin cambios. La prueba BoxLang `tests/probe.bxs` crea una tabla temporal de sesión de nombre aleatorio y comprueba filtro de espacio + documentos dentro de la consulta, reemplazo de metadatos, borrado y conservación del documento hermano. Solo prueba pgvector PostgreSQL directamente, no bx-ai Memory API. `node tests/contracts.mjs` pasó localmente: `OK: deterministic fixture location contract and repeated-value content assertions`. `git diff --check` pasó.
 
 Consulta de documentación oficial BoxLang AI realizada vía MCP: la búsqueda indica carga de diversos formatos, API de embeddings y loaders, pero no entregó referencia de API precisa para operaciones de memoria Postgres ni ubicación. Esto no demuestra capacidad de la versión instalada. No se encontró `.codegraph/` pertinente.
 
@@ -31,11 +49,11 @@ Consulta de documentación oficial BoxLang AI realizada vía MCP: la búsqueda i
 
 | Ítem | Resultado honesto |
 |---|---|
-| 00.1 Línea base | Pendiente: Compose iniciado, falta salida final, smoke/http y versiones efectivas. |
+| 00.1 Línea base | Verificado localmente: Compose aislado healthy; smoke y HTTP pasaron. Versiones efectivas de BoxLang, PostgreSQL, pgvector y Next anotadas; versión efectiva exacta de módulos no recuperada. |
 | 00.2 Respuesta `gpt-6-luna` | Bloqueada: no hay clave; ninguna petición. Prueba opt-in preparada, pero bloquea si no hay consentimiento, techo USD ≤1 y clave. El mecanismo exacto bx-ai 3.5.0 aún no confirmado; prueba se detiene antes de solicitar. |
 | 00.3 Embeddings/1.536 | Bloqueada: sin clave no se generó embedding. No se creó esquema de negocio ni se confirma dimensión. |
-| 00.4 Aislamiento | Probe SQL temporal implementado, no ejecutado aún. No prueba los vectores/modelos de bx-ai. |
-| 00.5 Ciclo vectorial | Probe SQL temporal implementado para lifecycle, no ejecutado; no confirma API del módulo. |
+| 00.4 Aislamiento | Probe SQL temporal pasó: espacio y documento seleccionados filtran dentro de recuperación. No prueba integración vectorial bx-ai ni exposición a un modelo real. |
+| 00.5 Ciclo vectorial | Probe SQL temporal pasó replace/metadata/delete y hermano preservado. No confirma API de bx-ai. |
 | 00.6 Extracción | Bloqueada/incompleta: fixtures de texto deterministas; no se incluyeron binarios DOCX/XLSX falsos. PDF, DOCX y XLSX no probados; loaders/dependencias/localización no confirmados. |
 | 00.7 Navegación/grafo | Bloqueada: no se agregaron bibliotecas sin prueba ni visor/grafo; no hay ubicaciones reales para validar. |
 | 00.8 Contratos | Parcial: `Document` y `Location` son clases BoxLang mínimas; mapa completo de contratos/operaciones propuesto abajo. Fragmento, cita, respuesta, conversación, tarea y relación aún no implementados como clases. |
@@ -46,10 +64,10 @@ Consulta de documentación oficial BoxLang AI realizada vía MCP: la búsqueda i
 
 | Puerta | Estado |
 |---|---|
-| P00.1 | Pendiente de salida de contenedores, smoke/http, JDBC, pgvector y conexión Next→BoxLang. |
+| P00.1 | Parcial: smoke confirma módulos/JDBC/pgvector; HTTP confirma Next→BoxLang. Aprobada para la línea base ejecutada. |
 | P00.2 | Bloqueada sin clave; no hay éxito simulado ni proveedor alternativo. |
-| P00.3 | Probe conserva filtros de espacio y selección documental en la query. Ejecución y comprobación de no exposición al modelo pendientes; gate bloqueada. |
-| P00.4 | Probe de reemplazo/borrado/sibling implementado; ejecución pendiente. |
+| P00.3 | Parcial: filtro de espacio/selección probado dentro de consulta SQL; no se hizo respuesta real ni prueba de payload enviado al modelo. |
+| P00.4 | Probe pasó reemplazo/borrado/metadata y preservación de sibling en tabla temporal. Integración bx-ai pendiente. |
 | P00.5 | Bloqueada: faltan fixtures binarios válidos y extracción/localización/visor por formato. |
 | P00.6 | Parcial: gaps identificados; no resueltos, por tanto no pasa. |
 

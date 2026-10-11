@@ -5,10 +5,10 @@ class Probe {
 		var quoted = '"#table#"';
 		queryExecute( "CREATE TEMP TABLE #quoted# (space_id text NOT NULL, document_id text NOT NULL, content text NOT NULL, embedding vector(3) NOT NULL, metadata jsonb NOT NULL, PRIMARY KEY(space_id, document_id))" );
 		try {
-			queryExecute( "INSERT INTO #quoted# VALUES ('A','doc-a','same phrase', '[1,0,0]', '{\"revision\":1}'), ('A','doc-sibling','same phrase', '[0,1,0]', '{}'), ('B','doc-b','same phrase', '[1,0,0]', '{}')" );
-			var retrieved = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id = :space AND document_id = ANY(:docs) ORDER BY embedding <-> '[1,0,0]'::vector", { space={value="A",sqltype="varchar"}, docs={value=["doc-a"],sqltype="varchar",list=true} } );
+			queryExecute( "INSERT INTO #quoted# VALUES ('A','doc-a','same phrase', '[1,0,0]', jsonb_build_object('revision',1)), ('A','doc-sibling','same phrase', '[0,1,0]', '{}'::jsonb), ('B','doc-b','same phrase', '[1,0,0]', '{}'::jsonb)" );
+			var retrieved = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id = :space AND document_id IN (:docs) ORDER BY embedding <-> CAST('[1,0,0]' AS vector)", { space={value="A",sqltype="varchar"}, docs={value="doc-a",sqltype="varchar",list=true} } );
 			if ( retrieved.recordCount != 1 || retrieved.document_id[1] != "doc-a" ) throw( message="Space/document filter failed before retrieval" );
-			queryExecute( "UPDATE #quoted# SET content='replacement', metadata='{\"revision\":2}' WHERE space_id='A' AND document_id='doc-a'" );
+			queryExecute( "UPDATE #quoted# SET content='replacement', metadata=jsonb_build_object('revision',2) WHERE space_id='A' AND document_id='doc-a'" );
 			var replaced = queryExecute( "SELECT content, metadata->>'revision' AS revision FROM #quoted# WHERE space_id='A' AND document_id='doc-a'" );
 			if ( replaced.content[1] != "replacement" || replaced.revision[1] != "2" ) throw( message="Replacement metadata check failed" );
 			queryExecute( "DELETE FROM #quoted# WHERE space_id='A' AND document_id='doc-a'" );
