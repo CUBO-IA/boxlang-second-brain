@@ -1,0 +1,90 @@
+// Real fixture smoke for bx-ai's installed loaders. OOXML checks below are
+// deliberately fixture-scoped because premium bx-word/bx-spreadsheet loaders
+// are not installed in this environment.
+import secondBrain.EvidenceExtractor;
+root = "/modules/second-brain/tests/fixtures/";
+checks = [];
+extractor = new EvidenceExtractor();
+markdown = new bxModules.bxai.models.loaders.MarkdownLoader( root & "locations.md" ).doLoad()[ 1 ].getContent();
+markdownLines = listToArray( markdown, char( 10 ), true );
+if ( markdownLines[ 2 ] != "repeat phrase" || markdownLines[ 3 ] != markdownLines[ 2 ] ) throw( message="bx-ai MarkdownLoader line 3/repeated citation mismatch" );
+checks.append( "MD=bx-ai MarkdownLoader" );
+text = new bxModules.bxai.models.loaders.TextLoader( root & "locations.txt" ).doLoad()[ 1 ].getContent();
+textLines = listToArray( text, char( 10 ), true );
+if ( textLines[ 1 ] != "Header" || textLines[ 2 ] != "Exact TXT target" || textLines[ 3 ] != textLines[ 2 ] ) throw( message="bx-ai TextLoader repeated quote mismatch: #text#" );
+checks.append( "TXT/code=bx-ai TextLoader" );
+codeLines = listToArray( new bxModules.bxai.models.loaders.TextLoader( root & "locations.js" ).doLoad()[ 1 ].getContent(), char( 10 ), true );
+if ( codeLines[ 2 ] != "const target = 'Exact CODE target';" || codeLines[ 3 ] != "const again = 'Exact CODE target';" ) throw( message="bx-ai TextLoader JavaScript line citation mismatch" );
+jsonText = new bxModules.bxai.models.loaders.JSONLoader( root & "locations.jsondata" ).doLoad()[ 1 ].getContent();
+if ( !findNoCase( "policy.maxDays: 10", jsonText ) || !findNoCase( "other.maxDays: 10", jsonText ) ) throw( message="bx-ai JSONLoader path values missing" );
+checks.append( "JSON=bx-ai JSONLoader" );
+csvText = new bxModules.bxai.models.loaders.CSVLoader( root & "locations.csv" ).doLoad()[ 1 ].getContent();
+if ( !findNoCase( "meals", csvText ) || !findNoCase( "40", csvText ) ) throw( message="bx-ai CSVLoader row/column values missing: #csvText#" );
+checks.append( "CSV=bx-ai CSVLoader" );
+pdfContent = new bxModules.bxai.models.loaders.PDFLoader( root & "locations.pdf" ).doLoad()[ 1 ].getContent();
+if ( !findNoCase( "General purchase policy.", pdfContent ) || !findNoCase( "For urgent purchases, attach prior authorization.", pdfContent ) ) throw( message="bx-ai PDFLoader failed to extract fixture" );
+extractedPages = extractor.pdfPages(root & "locations.pdf");
+if ( extractedPages.len()!=2 || extractedPages[2]!="For urgent purchases, attach prior authorization." ) throw(message="Reusable PDF extraction differs from page citation");
+pdf = createObject( "java", "org.apache.pdfbox.Loader" ).loadPDF( createObject( "java", "java.io.File" ).init( root & "locations.pdf" ) );
+try {
+	stripper = createObject( "java", "org.apache.pdfbox.text.PDFTextStripper" ).init();
+	stripper.setStartPage( 2 ); stripper.setEndPage( 2 );
+	page2 = stripper.getText( pdf );
+	quote = "For urgent purchases, attach prior authorization.";
+	if ( !findNoCase( quote, page2 ) || findNoCase( "General purchase policy.", page2 ) || find( quote, page2 ) != 1 ) throw( message="PDF page/offset coordinate does not resolve exact citation" );
+} finally { pdf.close(); }
+checks.append( "PDF=bx-ai PDFLoader + PDFBox page 2 exact citation" );
+
+paragraphValues=extractor.docxParagraphs(root & "locations.docx");
+docxQuote="Exact DOCX & target"; docxOffset=find(docxQuote,paragraphValues[2]);
+if(paragraphValues.len()!=3 || paragraphValues[2]!=docxQuote || paragraphValues[3]!=docxQuote || docxOffset!=1 || mid(paragraphValues[2],docxOffset,len(docxQuote))!=docxQuote) throw(message="DOCX entity decoding, run order, paragraph 2 offset or repeated quote mismatch");
+checks.append("DOCX=secure XML tree; escaped ampersand decoded; ordered runs and paragraph 2 citation exact");
+
+cellValues=extractor.xlsxCells(root & "locations.xlsx","Limits");
+limitCell=cellValues.filter((cell)=>cell.cell=="B2");
+if(limitCell.len()!=1 || limitCell[1].value!="250") throw(message="Second-sheet Limits!B2 mismatch");
+summaryValues=extractor.xlsxCells(root & "locations.xlsx","Summary");
+summaryText=summaryValues.filter((cell)=>cell.cell=="A1"); summaryDistractor=summaryValues.filter((cell)=>cell.cell=="B2");
+if(summaryText.len()!=1 || summaryText[1].value!="Summary & policy" || summaryDistractor.len()!=1 || summaryDistractor[1].value!="999") throw(message="XLSX shared-string entity or first-sheet distractor mismatch");
+checks.append("XLSX=secure XML tree; Summary first/distractor 999, Limits second/target 250; shared-string entities decoded");
+
+function assertExtractorRejects(required string fixture, required string expected){
+	try { extractor.xlsxCells(root & arguments.fixture,"Limits"); throw(message="Accepted malformed XLSX #arguments.fixture#"); }
+	catch(any failure){ if(!findNoCase(arguments.expected,failure.message)) rethrow; }
+}
+assertExtractorRejects("locations-bad-ref.xlsx","Invalid XLSX cell reference");
+assertExtractorRejects("locations-missing-ref.xlsx","Invalid XLSX cell reference");
+assertExtractorRejects("locations-fractional-shared.xlsx","Invalid XLSX shared string index");
+assertExtractorRejects("locations-out-of-range-shared.xlsx","out of bounds");
+assertExtractorRejects("locations-formula.xlsx","outside the supported subset");
+
+inlineRunsFile=materializeXlsxFixture("locations-inline-runs.xlsx.b64");
+try {
+	inlineRuns=extractor.xlsxCells(inlineRunsFile.getAbsolutePath(),"Limits");
+	inlineValue=inlineRuns.filter((cell)=>cell.cell=="A1");
+	if(inlineValue.len()!=1 || inlineValue[1].value!="A & B") throw(message="XLSX inline rich runs did not concatenate and decode to A & B");
+} finally { inlineRunsFile.delete(); }
+checks.append("XLSX inline rich-text runs concatenate to literal A & B through full ZIP extraction");
+
+unsupportedTypeFile=materializeXlsxFixture("locations-unsupported-value.xlsx.b64");
+try {
+	assertExtractorRejectsPath(unsupportedTypeFile.getAbsolutePath(),"Unsupported XLSX cell type unsupported at A1");
+} finally { unsupportedTypeFile.delete(); }
+checks.append("XLSX rejects unsupported cell type before reading its <v> value");
+checks.append("XLSX rejects B0, missing cell refs, fractional/out-of-range shared indices and unsupported formulas");
+
+function materializeXlsxFixture(required string fixture){
+	var file=createObject("java","java.io.File").createTempFile("p00-xlsx-",".xlsx");
+	var stream=createObject("java","java.io.FileOutputStream").init(file);
+	try { stream.write(createObject("java","java.util.Base64").getDecoder().decode(trim(fileRead(root & arguments.fixture)))); }
+	catch(any failure){ file.delete(); rethrow; }
+	finally { stream.close(); }
+	return file;
+}
+
+function assertExtractorRejectsPath(required string path, required string expected){
+	try { extractor.xlsxCells(arguments.path,"Limits"); throw(message="Accepted malformed XLSX #arguments.path#"); }
+	catch(any failure){ if(!findNoCase(arguments.expected,failure.message)) rethrow; }
+}
+
+println( "OK: " & checks.toList( "; " ) );

@@ -1,0 +1,17 @@
+import java:java.security.MessageDigest;
+
+random = createObject( "java", "java.security.SecureRandom" );
+encoder = createObject( "java", "java.util.Base64" ).getEncoder();
+decoder = createObject( "java", "java.util.Base64" ).getDecoder();
+saltBytes = random.generateSeed( 16 );
+salt = encoder.encodeToString( saltBytes );
+password = "phase01-demo-password";
+spec = createObject( "java", "javax.crypto.spec.PBEKeySpec" ).init( password.toCharArray(), decoder.decode( salt ), 600000, 256 );
+derived = createObject( "java", "javax.crypto.SecretKeyFactory" ).getInstance( "PBKDF2WithHmacSHA256" ).generateSecret( spec ).getEncoded();
+if ( !MessageDigest.isEqual( derived, derived ) || MessageDigest.isEqual( derived, decoder.decode( encoder.encodeToString( random.generateSeed( 32 ) ) ) ) ) {
+    throw( message="Java crypto interop/constant-time comparison failed" );
+}
+token = createObject( "java", "java.util.Base64" ).getUrlEncoder().withoutPadding().encodeToString( random.generateSeed( 32 ) );
+if ( len( token ) != 43 || reFind( "[^A-Za-z0-9_-]", token ) ) throw( message="Session token is not 32-byte base64url" );
+spec.clearPassword();
+println( "OK: PBKDF2-HMAC-SHA256/600000, 16-byte SecureRandom salt, 32-byte output, MessageDigest.isEqual, 32-byte base64url token" );

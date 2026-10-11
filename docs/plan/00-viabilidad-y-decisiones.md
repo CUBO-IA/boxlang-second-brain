@@ -1,6 +1,6 @@
 # Fase 00 — Viabilidad y decisiones de implementación
 
-**Estado:** Pendiente. **Dependencia:** ninguna. [Índice](README.md).
+**Estado:** Bloqueada por evidencia externa pendiente. La re-revisión local final de G1/G2/G3 fue aprobada por Sol; esto no verifica el cierre global de fase 00. **Dependencia:** ninguna. [Índice](README.md).
 
 **Fuente:** [arquitectura](../specification/06-arquitectura-y-seguridad.md) y [validaciones técnicas previas](../specification/08-aceptacion-y-pendientes.md#validaciones-técnicas-previas).
 
@@ -11,7 +11,7 @@ Demostrar que la base instalada puede cumplir los contratos críticos antes de d
 ## Trabajo ordenado
 
 - [ ] **00.1 — Línea base.** Levantar Compose y ejecutar `tests/smoke.bxs` y `tests/http.mjs` con los comandos de [verificación](verificacion.md#comandos-existentes). Registrar versiones efectivas, resultado y revisión del repositorio.
-- [ ] **00.2 — Respuestas reales.** Desde BoxLang AI instalado, enviar una petición sintética a `gpt-6-luna`. Registrar endpoint/API compatible, configuración, respuesta y uso reportado. Si no funciona, identificar si falla acceso, API o módulo; no sustituir el modelo silenciosamente.
+- [x] **00.2 — Respuestas reales.** Chat sintético validado desde bx-ai 3.5.0 con `gpt-6-luna`; respuesta, endpoint, configuración, uso y coste calculado registrados en [evidencia del probe](evidence/provider-phase00.md).
 - [ ] **00.3 — Embeddings.** Generar un embedding con `text-embedding-3-small`, comprobar su longitud y probar inserción/recuperación en pgvector. Confirmar o bloquear las 1.536 dimensiones propuestas antes de crear el esquema de negocio.
 - [ ] **00.4 — Aislamiento vectorial.** Crear datos sintéticos temporales de dos espacios con textos casi idénticos. Consultar uno y demostrar que el filtro se aplica en la recuperación, no después. Comprobar también selección de documentos.
 - [ ] **00.5 — Ciclo vectorial.** Sustituir y eliminar los vectores de un documento sin afectar otro del mismo espacio; comprobar metadatos y ausencia de resultados viejos. Limpiar solo los datos creados por la prueba.
@@ -29,8 +29,8 @@ Completar esta tabla con resultado real y enlace a la evidencia. «Por decidir»
 
 | Decisión | Resultado que debe registrarse | Estado inicial |
 |---|---|---|
-| Modelo de respuestas | Acceso a `gpt-6-luna`, API compatible con `bx-ai`, configuración y límites de respuesta | Por validar |
-| Embeddings | Acceso al modelo, dimensiones reales y compatibilidad del almacenamiento | Por validar |
+| Modelo de respuestas | Acceso a `gpt-6-luna`, Chat Completions compatible con `bx-ai`, respuesta exacta y uso; coste calculado, no conciliado con cuenta | Verificado en probe sintético |
+| Embeddings | `text-embedding-3-small` accesible; dimensión observada 1,536; roundtrip de lectura falla en dimensión 92 | Parcial: compatibilidad de almacenamiento por validar |
 | Recuperación | Cómo aplicar espacio/documentos antes de recuperar y cómo comprobarlo | Por validar |
 | Vectores | Operaciones reales de inserción, sustitución y borrado con metadatos | Por validar |
 | Extracción/particionado | Loader por formato, ubicaciones, tamaños de fragmento y límites estructurales | Por decidir tras pruebas |
@@ -57,5 +57,23 @@ Completar esta tabla con resultado real y enlace a la evidencia. «Por decidir»
 - [ ] Tabla anterior completada, contratos y diseño mínimo de datos/operaciones documentados, sin secretos ni documentos privados.
 - [ ] Evidencia de los diez pendientes técnicos de la especificación y [registro de cierre](verificacion.md#registro-de-cierre).
 - [ ] Todos los bloqueos que afecten las fases siguientes resueltos; si necesitan cambiar una decisión acordada, obtener aprobación primero.
+
+## Ejecución de Task 1
+
+Resultados históricos, comandos y bloqueos: [informe Task 1](../../.superpowers/sdd/00-viabilidad-y-decisiones/task-1-report.md). Sol aprobó localmente la última fix wave G1/G2/G3 en [re-revisión final](../../.superpowers/sdd/00-viabilidad-y-decisiones/sol-final-rereview.md). El probe real y acotado está en [evidencia del proveedor](evidence/provider-phase00.md): chat y embedding validados, pero el roundtrip pgvector falla; no se repiten pruebas de extracción ni seguridad por ello. Fase 00 sigue **Bloqueada**, entre otros, por roundtrip vectorial, aislamiento/ciclo, y operación externa pendiente (hostname/TLS/condiciones de operación); las respuestas y tarifas no acreditan facturación de cuenta.
+
+## Defaults locales propuestos para implementación (no medidos)
+
+| Área | Decisión provisional | Límite/recuperación |
+|---|---|---|
+| Ingesta | 20 archivos/operación; 50 MB = 50,000,000 bytes/archivo; máximo total 100 MB = 100,000,000 bytes de UTF-8 extraído. No truncar | Rechazar comprimidos en fase 00; si se habilitan, máximo 100 MB = 100,000,000 bytes expandidos y 10,000 entradas. Límites futuros a validar con cargas reales |
+| Fragmentos | Máximo 8,000 Unicode code points, solape 400 code points, máximo 500 fragmentos/documento | Fallar y conservar versión vigente si excede; sin publicación parcial |
+| Tareas | Tabla PostgreSQL futura como registro durable, lease 60 s con heartbeat cada 15 s; sin cola adicional | 3 intentos automáticos con backoff 1/5/15 min; reintento manual posterior. Fence por versionId impide publicar trabajo obsoleto |
+| Original + DB | Versiones inmutables y estados `staging → stored → ready`; `ready` solo tras rename atómico y hash coincidente | Al reinicio reconciliar `stored`: staging existente se renombra; destino con hash esperado se promueve a `ready`; archivo ausente/mismatch falla nueva versión y retiene la ready anterior. Temporales huérfanos >24 h se eliminan. Borrado marca tombstone, elimina derivados/original y se reanuda idempotentemente |
+| IA | USD 20/día UTC, según especificación | Reserva atómica concurrente antes de llamada; liquidar con uso real; ante uso desconocido retener reserva hasta conciliación; detener al agotar. Tarifas del modelo con fecha son requisito de configuración: sin tarifa no llamar ni estimar |
+| Operación/backups | Acceso privado tras TLS; backup diario consistente de PostgreSQL + manifiesto/hash + originales inmutables; cifrado AES-256-GCM antes de salir del volumen | Retención propuesta: 7 diarios, 4 semanales, 12 mensuales. Clave de cifrado fuera del repo/en gestor de secretos; restore conjunto trimestral. RPO 24 h/RTO 4 h propuestos, no medidos |
+| Carga | 1,000 docs/espacio; 30 sesiones concurrentes; muestra de texto de 1 MB = 1,000,000 bytes y archivo máximo 50 MB = 50,000,000 bytes | Objetivo p95 pregunta ≤30 s; indexación de 1 MB ≤60 s. Archivos 1–10 MB ≤2 min; >10–25 MB ≤5 min; >25–50 MB ≤10 min. Registrar bins 1/2/5/10/25/50 MB, CPU/RAM, conexión y proveedor. Son objetivos candidatos, no medidos; hardware/host/dominio siguen desconocidos |
+
+Estos valores son defaults de diseño para revisar antes de producción, no resultados experimentales ni capacidades ya implementadas. El hostname/dominio, recursos del servidor y tarifas no se inventan en fase 00.
 
 **No se construye aquí:** la aplicación completa, una integración vectorial alternativa, una cola adicional por anticipado ni bibliotecas elegidas sin prueba. **Siguiente:** [fase 01](01-cuentas-espacios-y-permisos.md).

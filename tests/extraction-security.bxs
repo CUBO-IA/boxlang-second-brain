@@ -1,0 +1,98 @@
+import secondBrain.EvidenceExtractor;
+
+extractor=new EvidenceExtractor();
+tempDir=createObject("java","java.nio.file.Files").createTempDirectory("p00-xml-security-").toFile();
+localXml=createObject("java","java.io.File").init(tempDir,"synthetic.xml");
+fileWrite(localXml.getAbsolutePath(),"<document><p><t>LOCAL_SYNTHETIC_CONTENT</t></p></document>","utf-8");
+
+function makeZipFixture(required struct entries, required string suffix) {
+	var file=createObject("java","java.io.File").createTempFile("p00-xml-",arguments.suffix);
+	var output=createObject("java","java.util.zip.ZipOutputStream").init(createObject("java","java.io.FileOutputStream").init(file));
+	try {
+		for(var name in arguments.entries) {
+			output.putNextEntry(createObject("java","java.util.zip.ZipEntry").init(name));
+			output.write(createObject("java","java.lang.String").init(arguments.entries[name]).getBytes("UTF-8"));
+			output.closeEntry();
+		}
+	} finally { output.close(); }
+	return file;
+}
+
+function assertRejected(required any action, required string label) {
+	var rejected=false;
+	try { arguments.action(); }
+	catch(any failure) {
+		rejected=true;
+		if(!findNoCase("OOXML part must contain literal XML",failure.message)) rethrow;
+	}
+	if(!rejected) throw(message="Accepted non-XML OOXML part: #arguments.label#");
+}
+
+function expectDocTypeRejected(required any action) {
+	var rejected=false;
+	try { arguments.action(); } catch(any failure) { rejected=true; }
+	if(!rejected) throw(message="Extractor accepted synthetic DOCTYPE under permissive XML defaults");
+}
+
+function makeMalformedUtf8Fixture() {
+	var file=createObject("java","java.io.File").createTempFile("p00-xml-invalid-",".docx");
+	var output=createObject("java","java.util.zip.ZipOutputStream").init(createObject("java","java.io.FileOutputStream").init(file));
+	var bytes=createObject("java","java.io.ByteArrayOutputStream").init();
+	bytes.write(60); bytes.write(195); bytes.write(40); bytes.write(62);
+	try {
+		output.putNextEntry(createObject("java","java.util.zip.ZipEntry").init("word/document.xml"));
+		output.write(bytes.toByteArray());
+		output.closeEntry();
+	} finally { output.close(); }
+	return file;
+}
+
+function assertInvalidUtf8(required string path) {
+	var rejected=false;
+	try { extractor.docxParagraphs(arguments.path); }
+	catch(any failure) {
+		rejected=true;
+		if(!findNoCase("not valid UTF-8",failure.message)) rethrow;
+	}
+	if(!rejected) throw(message="Accepted malformed UTF-8 OOXML part");
+}
+
+urlServer=createObject("java","com.sun.net.httpserver.HttpServer").create(createObject("java","java.net.InetSocketAddress").init("127.0.0.1",0),0);
+requestCount=createObject("java","java.util.concurrent.atomic.AtomicInteger").init(0);
+urlServer.createContext("/synthetic.xml",(exchange)=>{
+	requestCount.incrementAndGet();
+	var payload=createObject("java","java.lang.String").init("<document><p><t>URL_SYNTHETIC_CONTENT</t></p></document>").getBytes("UTF-8");
+	exchange.sendResponseHeaders(200,payload.length);
+	exchange.getResponseBody().write(payload);
+	exchange.close();
+});
+urlServer.start();
+url=urlServer.getAddress().getHostString() & ":" & urlServer.getAddress().getPort();
+url="http://" & url & "/synthetic.xml";
+docxUrl=makeZipFixture({"word/document.xml"=url},".docx");
+try { assertRejected(()=>extractor.docxParagraphs(docxUrl.getAbsolutePath()),"DOCX localhost URL"); }
+finally { docxUrl.delete(); urlServer.stop(0); }
+if(requestCount.get()!=0) throw(message="DOCX URL part caused a localhost HTTP request");
+
+xlsxPath=makeZipFixture({"xl/workbook.xml"=localXml.getAbsolutePath()},".xlsx");
+try { assertRejected(()=>extractor.xlsxCells(xlsxPath.getAbsolutePath(),"Limits"),"XLSX local path"); }
+finally { xlsxPath.delete(); }
+
+bomDocx=makeZipFixture({"word/document.xml"=char(65279) & "<document><p><t>BOM_OK</t></p></document>"},".docx");
+try {
+	if(extractor.docxParagraphs(bomDocx.getAbsolutePath())[1]!="BOM_OK") throw(message="UTF-8 BOM normalization changed literal XML");
+} finally { bomDocx.delete(); }
+invalidUtf8=makeMalformedUtf8Fixture();
+try { assertInvalidUtf8(invalidUtf8.getAbsolutePath()); }
+finally { invalidUtf8.delete(); }
+
+entityXml='<!DOCTYPE document [<!ENTITY synthetic SYSTEM "' & localXml.toURI().toString() & '">]><document><p><t>&synthetic;</t></p></document>';
+// Prove this invocation uses deliberately permissive defaults with only a generated local fixture.
+if(isNull(xmlParse(XML=entityXml))) throw(message="Permissive XML test configuration failed to parse its synthetic DOCTYPE");
+docxDoctype=makeZipFixture({"word/document.xml"=entityXml},".docx");
+try { expectDocTypeRejected(()=>extractor.docxParagraphs(docxDoctype.getAbsolutePath())); }
+finally { docxDoctype.delete(); }
+
+fileDelete(localXml.getAbsolutePath());
+tempDir.delete();
+println("OK: shared zipXml rejects DOCX localhost URL/XLSX local path before I/O; normalizes UTF-8 BOM, rejects malformed UTF-8, and rejects DOCTYPE despite permissive defaults");

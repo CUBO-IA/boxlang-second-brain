@@ -1,0 +1,24 @@
+run = getSystemSetting("P01_RUN", "");
+if ( reFind("^[a-z0-9-]{1,40}$", run) != 1 ) throw(message="P01_RUN must be a unique test-only slug");
+
+migrations = queryExecute("SELECT COUNT(*) AS total FROM schema_migrations WHERE version = 1");
+if ( migrations.total[1] != 1 ) throw(message="Version 1 migration was duplicated or missing");
+invitations = queryExecute("SELECT to_regclass('public.invitations') IS NULL AS absent");
+if ( !invitations.absent[1] ) throw(message="No invitation table is permitted in phase 01");
+
+anaEmail = "p01-#run#-ana@example.invalid";
+account = queryExecute("SELECT password_salt, password_hash, password_iterations FROM accounts WHERE email = ?", [ anaEmail ]);
+if ( account.recordCount != 1 || account.password_iterations[1] != 600000 ) throw(message="Password record is missing or uses a weaker work factor");
+decoder = createObject("java", "java.util.Base64").getDecoder();
+if ( decoder.decode(account.password_salt[1]).length != 16 || decoder.decode(account.password_hash[1]).length != 32 ) throw(message="Password salt/output size is invalid");
+
+abuseEmail = "p01-#run#-abuse@example.invalid";
+attempts = queryExecute("SELECT attempts FROM account_rate_limits WHERE action = 'login' AND subject_hash = ?", [ lCase(hash(abuseEmail, "SHA-256")) ]);
+if ( attempts.recordCount != 1 || attempts.attempts[1] != 11 ) throw(message="The abuse counter was not persisted at the expected limit");
+
+sessionColumns = queryExecute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'account_sessions'");
+columns = [];
+for ( column in sessionColumns.column_name ) columns.append(column);
+if ( !columns.contains("session_hash") || columns.contains("session_token") || columns.contains("token") ) throw(message="Session table must store token hash, not the bearer token");
+
+println("OK P01 audit: unique migration row, no invitation model, PBKDF2 parameters persisted, bounded database rate counter, hashed-only session column.");

@@ -20,7 +20,7 @@ docker compose exec boxlang boxlang tests/smoke.bxs
 docker compose exec -T frontend node --input-type=module < tests/http.mjs
 ```
 
-Estos comandos verifican únicamente la base actual. No prueban cuentas, ingesta, respuestas ni grafo.
+Estos comandos verifican la base de infraestructura. Para la fase 01, ejecutar además las pruebas `tests/phase01-crypto.bxs`, `tests/phase01-expiry.bxs`, `tests/phase01-http.mjs` y `tests/phase01-audit.bxs` documentadas en el [README](../../README.md) y el [plan de fase 01](01-cuentas-espacios-y-permisos.md). No prueban ingesta, respuestas de IA ni grafo.
 
 Los futuros scripts deben documentar su comando real al crearse y ejecutarse en los contenedores existentes. Aprovechar scripts BoxLang y `node:assert` cuando basten; no agregar un framework de pruebas por anticipado. Las comprobaciones visuales deben incluir navegador, acciones y resultado esperado; no confundir HTTP 200 con navegación/resaltado correctos.
 

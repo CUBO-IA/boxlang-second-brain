@@ -1,0 +1,24 @@
+run = getSystemSetting("P01_RUN", "");
+if ( reFind("^[a-z0-9-]{1,40}$", run) != 1 ) throw(message="P01_RUN must be a unique test-only slug");
+email = "p01-#run#-expiry@example.invalid";
+service = new secondBrain.AccountService();
+request = { method: "POST", body: { email: email, password: "phase01-synthetic-password" }, origin: getSystemSetting("APP_ORIGIN", "http://127.0.0.1:3002"), csrfToken: "", sessionToken: "", spaceId: "", memberId: "" };
+
+try {
+	registered = service.handle("register", request);
+	if ( registered.status != 202 ) throw(message="Expiry check account registration failed");
+	loggedIn = service.handle("login", request);
+	if ( loggedIn.status != 200 || !structKeyExists(loggedIn, "setCookie") ) throw(message="Expiry check login failed");
+	tokenPart = listFirst(loggedIn.setCookie, ";");
+	token = mid(tokenPart, find("=", tokenPart) + 1, len(tokenPart));
+	currentRequest = { method: "GET", body: {}, origin: "", csrfToken: "", sessionToken: token, spaceId: "", memberId: "" };
+	if ( service.handle("current", currentRequest).status != 200 ) throw(message="New session was not usable");
+	queryExecute("UPDATE account_sessions SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE session_hash = ?", [ lCase(hash(token, "SHA-256")) ]);
+	expired = service.handle("current", currentRequest);
+	if ( expired.status != 401 || !structKeyExists(expired, "setCookie") || !findNoCase("Max-Age=0", expired.setCookie) ) throw(message="Expired session remained authorized or cookie was not cleared");
+	println("OK P01.1: real DB expiry denies the next current-session request and clears the cookie.");
+} finally {
+	queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [ lCase(hash(email, "SHA-256")) ]);
+	queryExecute("DELETE FROM account_rate_limits WHERE action = 'login' AND subject_hash = ?", [ lCase(hash(email, "SHA-256")) ]);
+	queryExecute("DELETE FROM accounts WHERE email = ?", [ email ]);
+}

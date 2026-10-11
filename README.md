@@ -1,88 +1,89 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang con frontend Next.js y un único GET de prueba; sin lógica de negocio.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones y permisos; frontend Next.js con delegación same-origin fija. Fase 01 no llama a servicios de IA y no implementa biblioteca, ingesta ni chats.
 
 ## Entorno
 
-- BoxLang MiniServer y CLI **1.18.0**, sobre el Java incluido en la imagen oficial.
-- Next.js **16.4.0** con App Router, TypeScript, Tailwind CSS, ESLint y React **19.3.0**, sobre Node.js **24**; generado con `pnpm create next-app@latest frontend --yes`, con dependencias fijadas en `frontend/package.json` y `frontend/pnpm-lock.yaml`.
-- BoxLang AI (`bx-ai`) **3.5.0** y driver PostgreSQL (`bx-postgresql`) **1.2.0**, instalados al construir la imagen.
-- PostgreSQL **17** con pgvector **0.8.7**, volumen persistente y verificación de disponibilidad.
-- MCP oficial de documentación configurado exclusivamente para este proyecto en `opencode.json`.
+- BoxLang MiniServer/CLI **1.18.0+66** y Java incluido en la imagen.
+- Next.js **16.4.0**, React **19.3.0**, TypeScript, Tailwind CSS y ESLint; Node.js **24.21.0** dentro del contenedor.
+- BoxLang AI (`bx-ai`) **3.5.0**, driver PostgreSQL (`bx-postgresql`) **1.2.0** y PostgreSQL **17.11** con pgvector **0.8.7**.
+- Docker Compose; no hace falta instalar runtimes ni módulos en el equipo.
 
-BoxLang AI ofrece integración con PostgreSQL/pgvector para memoria vectorial y RAG. PostgreSQL almacena los vectores; `bx-ai` proporciona la integración. No hace falta agregar otra base vectorial para empezar.
+BoxLang AI ya integra PostgreSQL/pgvector para memoria vectorial y RAG. Las pruebas de fase 01 son deterministas y no realizan llamadas de IA.
 
-## Levantar la base
+## Levantar el entorno
 
-Requisitos: Docker y Docker Compose. No necesitas Node.js, Java, BoxLang ni CommandBox instalados en el equipo.
+Requisitos: Docker y Docker Compose. Crea `.env` desde `.env.example` y establece una contraseña de PostgreSQL.
 
 ```bash
 cp .env.example .env
 # Edita .env y cambia POSTGRES_PASSWORD.
-docker compose up -d --build --wait
-docker compose exec boxlang boxlang tests/smoke.bxs
-docker compose exec -T frontend node --input-type=module < tests/http.mjs
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 up -d --build --wait
+docker compose -p second-brain-phase01 exec boxlang boxlang backend/migrations/migrate.bxs
+docker compose -p second-brain-phase01 exec boxlang boxlang tests/smoke.bxs
 ```
 
-La prueba comprueba la carga del módulo, BoxLang AI, la conexión JDBC y una operación vectorial sin escribir datos ni consumir APIs de IA.
+La migración de cuentas es versionada e idempotente; ejecútala también al actualizar un volumen existente. Servicios locales: frontend `http://127.0.0.1:3002`, BoxLang `http://127.0.0.1:8082`, PostgreSQL `127.0.0.1:55435`. El health endpoint es `GET /api/health.bxm`.
 
-### Frontend y API de prueba
+`APP_ORIGIN` debe coincidir exactamente con el origen público del navegador. En producción configura un origen `https://` detrás de TLS; la cookie de sesión recibe `Secure`. HTTP solo se admite para `localhost` o `127.0.0.1`. No publiques estos servicios directamente a Internet.
 
-- Frontend: http://localhost:3000. Muestra la respuesta real de BoxLang y un error si no puede conectar.
-- Backend: `GET http://localhost:8080/api/health.bxm` → `{"status":"ok","backend":"BoxLang"}`.
-- Otros métodos reciben `405 Method Not Allowed` con `Allow: GET`.
-- Next.js consulta `http://boxlang:8080` desde el servidor mediante la red de Compose; no se necesita CORS ni una segunda API en Next.js.
-- Puertos locales configurables con `FRONTEND_PORT` y `BACKEND_PORT` en `.env`.
-- Los cambios en `frontend/app` y `backend` se reflejan sin reconstruir. Si cambias dependencias, reconstruye con `docker compose up -d --build --wait`.
+`APP_ORIGIN` explícito prevalece; si se omite, Compose lo deriva de `FRONTEND_PORT` (por defecto `http://127.0.0.1:3000`). Para `localhost`, HTTPS o un dominio, configura el origen exacto que usa el navegador. Los puertos Compose pueden ajustarse con `FRONTEND_PORT`, `BACKEND_PORT` y `POSTGRES_PORT`.
+
+## API de fase 01
+
+Next.js permite únicamente estas rutas same-origin y las delega a `backend/api/account.bxm`; autorización, persistencia y reglas de negocio viven en `backend/secondBrain/AccountService.bx`.
+
+| Ruta | Método | Resultado correcto |
+|---|---|---|
+| `/api/auth/register` | POST | `202`; cuerpo genérico `{"message":"Solicitud procesada"}`, también para correo duplicado |
+| `/api/auth/login` | POST | `200`; usuario y token CSRF en JSON, sesión opaca solo en cookie HttpOnly |
+| `/api/auth/current` | GET | `200`; usuario y token CSRF de la sesión vigente |
+| `/api/auth/logout` | POST | `200`; invalida sesión y expira la cookie |
+| `/api/spaces` | GET / POST | `200` lista propia / `201` crea espacio con rol admin atómico |
+| `/api/spaces/:spaceId` | GET | `200` solo si hay membresía efectiva |
+| `/api/spaces/:spaceId/members` | GET / POST | `200`; gestión solo admin. Incorporar cuenta existente o inexistente da el mismo `Solicitud procesada` y nunca crea invitación |
+| `/api/spaces/:spaceId/members/:memberId` | PATCH / DELETE | `200`; cambiar rol o retirar miembro. `409` si se intenta quitar/degradar al último admin |
+
+Correos se recortan y pasan a minúsculas; contraseñas admiten 12–128 caracteres. Se usa PBKDF2-HMAC-SHA256, 600.000 iteraciones, salt aleatorio de 16 bytes y resultado de 32 bytes, comparado en tiempo constante. Las sesiones usan 32 bytes aleatorios; PostgreSQL guarda solo SHA-256 del token, expiran a las 12 horas y no se exponen en JSON/localStorage.
+
+La cookie es `HttpOnly; SameSite=Lax; Path=/; Max-Age=43200` y añade `Secure` con `APP_ORIGIN` HTTPS. Registro/login comprueban `Origin`; toda mutación autenticada comprueba `Origin` y CSRF. El límite de registro/login es 10 intentos por correo y ventana de 15 minutos, con contabilidad persistida en PostgreSQL.
+
+Roles persistidos: `admin`, `editor`, `reader`. Todos los miembros leen; admin/editor quedan autorizados para futuras escrituras de documentos; solo admin gestiona membresías. Errores relevantes: `400` entrada inválida, `401` sesión/credenciales no válidas, `403` Origin/CSRF o permiso denegado, `409` último admin y `429` límite de intentos.
+
+## Comprobaciones de fase 01
+
+Ejecuta dentro del mismo proyecto Compose. La suite HTTP usa API BoxLang, Next.js y PostgreSQL reales; elige un `P01_RUN` nuevo para cada ejecución:
 
 ```bash
-curl http://localhost:8080/api/health.bxm
+docker compose -p second-brain-phase01 exec boxlang boxlang tests/phase01-crypto.bxs
+docker compose -p second-brain-phase01 exec boxlang boxlang tests/phase01-expiry.bxs
+P01_RUN=phase01-check-01 docker compose -p second-brain-phase01 exec -T -e P01_RUN=phase01-check-01 -e BOXLANG_URL=http://boxlang:8080 -e P01_FRONTEND_URL=http://127.0.0.1:3000 -e P01_ORIGIN=http://127.0.0.1:3002 frontend node --input-type=module < tests/phase01-http.mjs
+P01_RUN=phase01-check-01 docker compose -p second-brain-phase01 exec -e P01_RUN=phase01-check-01 boxlang boxlang tests/phase01-audit.bxs
 ```
 
-`tests/http.mjs` comprueba el JSON del GET, el rechazo de POST y que la página de Next.js recibió la respuesta del backend. El contenedor `boxlang` también conserva el CLI. Para abrir el REPL:
+`phase01-cleanup.bxs` elimina únicamente las cuentas sintéticas del slug indicado; úsalo solo después de terminar pruebas y auditorías. La interfaz ES/EN ofrece registro, login, espacios, gestión de miembros y avisos de sesión revocada. El correo declarado no verifica identidad y no hay recuperación de contraseña por email.
+
+Desde el contenedor, el CLI sigue disponible con `docker compose -p second-brain-phase01 exec boxlang boxlang`. Desde otros contenedores PostgreSQL está en `postgres:5432`; la datasource BoxLang es `secondBrain`. Los archivos de `frontend/app` y `backend` se montan para desarrollo; reconstruye si cambias dependencias.
+
+## Probe opt-in de OpenAI
+
+La clave opcional se pasa **solo al contenedor BoxLang**, nunca al frontend. Compose configura `P00_ALLOW_PROVIDER_CALLS=NO` por defecto; no hay llamadas al iniciar servicios. Para habilitar la prueba manualmente, agrega `OPENAI_API_KEY` al `.env` privado e ignorado de este worktree; no copies la clave al repo, a este chat ni a logs. Luego recrea BoxLang para cargar el entorno y habilita la prueba únicamente al ejecutar el script:
 
 ```bash
-docker compose exec boxlang boxlang
+docker compose -p second-brain-phase01 up -d --no-deps boxlang
+P00_ALLOW_PROVIDER_CALLS=YES docker compose -p second-brain-phase01 exec -e P00_ALLOW_PROVIDER_CALLS=YES boxlang boxlang tests/provider.bxs
 ```
 
-### PostgreSQL
+El `.env.example` deja `P00_MAX_USD=1` y fecha/fuente/tarifas explícitas. Según el precio **Standard** publicado a **2026-10-11**, el probe actual usa `gpt-6-luna`: USD 0.10/M tokens de entrada y USD 0.50/M de salida; `text-embedding-3-small`: USD 0.02/M de entrada. Referencias: [modelo GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios API](https://developers.openai.com/api/docs/pricing) y [modelos de embeddings](https://developers.openai.com/api/docs/guides/embeddings). Las tarifas pueden variar por modalidad y procesamiento regional; vuelve a confirmar fecha, tipo de endpoint y tarifa antes de permitir llamadas.
 
-- Desde otros contenedores: `postgres:5432`.
-- Desde el equipo: `127.0.0.1:55433`, o el puerto configurado en `.env`.
-- Datasource BoxLang: `secondBrain`.
-- Base, usuario y contraseña: valores de `.env`.
+El probe sintético ejecutado en el worktree validó las respuestas de chat y embedding, uso reportado y 1,536 dimensiones. El roundtrip pgvector falló en la dimensión 92 y queda pendiente diagnosticar; el resultado completo y coste calculado están en [evidencia P00](docs/plan/evidence/provider-phase00.md). No se cambió de modelo. El guard requiere además el opt-in explícito, tarifas/fecha/referencia válidas y un techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
 
-```bash
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-docker compose logs -f
-docker compose down
-```
+## MCP y documentación
 
-`docker compose down` conserva los datos. El script `docker/postgres/init.sql` habilita `vector` solo al inicializar un volumen vacío; no crea tablas de negocio. Cambiar las credenciales en `.env` no cambia las de una base ya inicializada.
+Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Este entorno es de desarrollo: el usuario inicial de PostgreSQL es administrador. Antes de producción, crear un usuario de aplicación con permisos mínimos y gestionar secretos y copias de seguridad.
-
-## MCP de documentación
-
-Abre OpenCode desde esta carpeta para cargar `opencode.json`:
-
-```bash
-opencode
-# O comprueba la conexión:
-opencode mcp list
-```
-
-Endpoint: `https://boxlang.ortusbooks.com/~gitbook/mcp`. Es el MCP público de documentación; no es `bx-mcp` ni un servidor MCP del futuro agente.
+Estado de seguimiento: fase 01 **Verificada** con gate aprobado por Sol; fase 00 continúa **Bloqueada** por roundtrip vectorial y evidencia externa pendiente. Ver [plan e informe de fase 01](docs/plan/01-cuentas-espacios-y-permisos.md), [evidencia de proveedor](docs/plan/evidence/provider-phase00.md) y [verificación](docs/plan/verificacion.md).
 
 ## Alcance futuro, no implementado
 
-Transformar documentos, código, notas, Markdown, PDFs y JSON en conocimiento utilizable: preguntas respaldadas por evidencia, conexiones entre fuentes, contradicciones y separación entre hechos e inferencias.
-
-Posibles ampliaciones: ingesta continua, relaciones entre conceptos y componentes reutilizables de carga, particionado, indexación y recuperación. Pendientes: proveedor de IA, modelos de chat y embeddings, dimensiones vectoriales, esquema de datos y estrategia de ingesta. No se han creado tablas, índices vectoriales, loaders ni agentes.
-
-## Referencias
-
-- [Módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang)
-- [BoxLang con Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker)
-- [BoxLang AI](https://ai.ortusbooks.com)
-- [pgvector](https://github.com/pgvector/pgvector)
+Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. El probe de modelos es independiente de esa funcionalidad y no implica integración productiva; acceso de cuenta, respuestas/uso reales y dimensiones/operación siguen pendientes. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.

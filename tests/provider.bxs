@@ -1,0 +1,121 @@
+// Opt-in only. No fallback, retries, sentinel key, or request without dated rates.
+import secondBrain.ProviderProbeValidation;
+env = server.system.environment;
+recordPath = env.P00_PROVIDER_RECORD_PATH ?: "/tmp/second-brain-provider-probe.ndjson";
+function record( required struct event ) {
+	var line = jsonSerialize( arguments.event );
+	fileAppend( recordPath, line & char(10), "utf-8" );
+	println( line );
+}
+function safeError( required any failure, required string apiKey ) {
+	var message = arguments.failure.message ?: "provider request or validation failed";
+	return len(arguments.apiKey) ? replace(toString(message), arguments.apiKey, "[REDACTED]", "all") : toString(message);
+}
+function blocked( required string reason ) {
+	record( { status="BLOCKED", passed=false, requestsMade=0, reason=arguments.reason } );
+}
+function requestChat(required struct probeConfig, required string apiKey, required any validator, required numeric inputRate, required numeric outputRate) {
+	var response=javacast("null","");
+	var observation={modelObserved="",finishReason="",response="",usage={}};
+	var validated={};
+	try {
+		response=aiChat("Reply with exactly: P00_PROVIDER_PROBE_OK",{model=arguments.probeConfig.chatModel,max_completion_tokens=arguments.probeConfig.maxCompletionTokens,reasoning_effort=arguments.probeConfig.reasoningEffort},{provider=arguments.probeConfig.provider,apiKey=arguments.apiKey,timeout=arguments.probeConfig.timeoutSeconds,returnFormat="raw",logRequest=false,logResponse=false});
+		observation=arguments.validator.observeChat(response);
+		validated=arguments.validator.validateChat(response,arguments.probeConfig.chatModel,"P00_PROVIDER_PROBE_OK",arguments.inputRate,arguments.outputRate);
+		return {ok=true,observation=observation,validation=validated};
+	} catch(any failure) {
+		return {ok=false,observation=observation,validation=validated,error=safeError(failure,arguments.apiKey)};
+	}
+}
+function requestEmbedding(required struct probeConfig, required string apiKey, required any validator, required numeric inputRate) {
+	var response=javacast("null","");
+	var observation={modelObserved="",usage={},dimensions=0};
+	var validated={};
+	try {
+		response=aiEmbed("synthetic phase zero embedding probe",{model=arguments.probeConfig.embeddingModel},{provider=arguments.probeConfig.provider,apiKey=arguments.apiKey,timeout=arguments.probeConfig.timeoutSeconds,returnFormat="raw",logRequest=false,logResponse=false});
+		observation=arguments.validator.observeEmbedding(response);
+		validated=arguments.validator.validateEmbedding(response,arguments.probeConfig.embeddingModel,arguments.inputRate);
+		return {ok=true,observation=observation,validation=validated};
+	} catch(any failure) {
+		return {ok=false,observation=observation,validation=validated,error=safeError(failure,arguments.apiKey)};
+	}
+}
+function checkEmbeddingBudget(required any validator, required numeric chatCost, required numeric embeddingReserve, required numeric ceiling) {
+	try {
+		arguments.validator.ensureChatBudget(arguments.chatCost,arguments.embeddingReserve,arguments.ceiling);
+		return {ok=true};
+	} catch(any failure) { return {ok=false,reason=failure.message ?: "Observed chat cost plus embedding reserve exceeds configured ceiling"}; }
+}
+function summarizeProbe(required any validator, required struct chat, required struct embedding, required numeric ceiling) {
+	try { return {ok=true,summary=arguments.validator.summarize(arguments.chat,arguments.embedding,arguments.ceiling)}; }
+	catch(any failure) { return {ok=false,reason=failure.message ?: "Validated model costs exceed configured ceiling"}; }
+}
+function runPgvectorRoundtrip(required string table, required array vector) {
+	var memory=new bxModules.bxai.models.memory.vector.PostgresVectorMemory(collection=arguments.table);
+	var found=[];
+	try {
+		memory.configure({datasource="secondBrain",table=arguments.table,collection=arguments.table,dimensions=1536,distanceFunction="COSINE",indexType="HNSW"});
+		memory.storeDocument("provider-roundtrip","synthetic provider embedding",arguments.vector,{spaceId="P00",documentId="roundtrip",probe="provider"});
+		found=memory.findSimilar(arguments.vector,1,{spaceId="P00",documentId="roundtrip"});
+		if(found.len()!=1 || found[1].id!="provider-roundtrip" || found[1].embedding.len()!=1536) throw(message="Provider vector pgvector roundtrip did not return 1,536 dimensions");
+		for(var dimension=1;dimension<=1536;dimension++) {
+			var delta=abs(found[1].embedding[dimension]-arguments.vector[dimension]);
+			if(delta>0.000001) throw(message="Provider vector pgvector roundtrip error at dimension #dimension#: #delta#");
+		}
+		return {ok=true,resultCount=found.len()};
+	} catch(any failure) { return {ok=false,error=failure.message ?: "pgvector roundtrip error"}; }
+	finally { queryExecute("DROP TABLE IF EXISTS #arguments.table#",{}, {datasource="secondBrain"}); }
+}
+
+if ( ( env.P00_ALLOW_PROVIDER_CALLS ?: "" ) != "YES" ) { blocked("P00_ALLOW_PROVIDER_CALLS must equal YES"); abort; }
+key = env.OPENAI_API_KEY ?: "";
+if ( !len(key) ) { blocked("OPENAI_API_KEY absent"); abort; }
+priceDate = env.P00_PRICE_DATE ?: "";
+priceReference = env.P00_PRICE_REFERENCE ?: "";
+if ( !reFind("^20[0-9]{2}-[0-9]{2}-[0-9]{2}$",priceDate) || !len(priceReference) ) { blocked("Require P00_PRICE_DATE (YYYY-MM-DD) and P00_PRICE_REFERENCE; no current tariff assumed"); abort; }
+validation = new ProviderProbeValidation();
+ceiling = val(env.P00_MAX_USD ?: 0);
+chatInRate = val(env.P00_CHAT_INPUT_USD_PER_MILLION ?: 0);
+chatOutRate = val(env.P00_CHAT_OUTPUT_USD_PER_MILLION ?: 0);
+embeddingRate = val(env.P00_EMBED_USD_PER_MILLION ?: 0);
+if ( !validation.isFiniteNumber(ceiling) || ceiling <= 0 || ceiling > 1 || !validation.isFiniteNumber(chatInRate) || chatInRate <= 0 || !validation.isFiniteNumber(chatOutRate) || chatOutRate <= 0 || !validation.isFiniteNumber(embeddingRate) || embeddingRate <= 0 ) { blocked("Require USD ceiling in (0,1] and finite positive caller-supplied USD/M-token rates"); abort; }
+estimatedMaxUSD = (64*chatInRate + 32*chatOutRate + 64*embeddingRate)/1000000;
+if ( !validation.isFiniteNumber(estimatedMaxUSD) || estimatedMaxUSD > ceiling ) { blocked("Conservative combined estimate exceeds configured ceiling"); abort; }
+
+config = { provider="openai", chatModel="gpt-6-luna", embeddingModel="text-embedding-3-small", chatEndpoint="/v1/chat/completions", embeddingEndpoint="/v1/embeddings", timeoutSeconds=30, retries=0, maxCompletionTokens=32, reasoningEffort="none", priceDate=priceDate, priceReference=priceReference, ratesUSDPerMillion={chatInput=chatInRate,chatOutput=chatOutRate,embeddingInput=embeddingRate}, ceilingUSD=ceiling, estimatedMaximumUSD=estimatedMaxUSD };
+chatRun=requestChat(config,key,validation,chatInRate,chatOutRate);
+chatObservation=chatRun.observation;
+chatValidation=chatRun.validation;
+if(!chatRun.ok) {
+	record({status="ERROR",operation="chat",validated=false,passed=false,requestsMade=1,modelRequested=config.chatModel,modelObserved=chatObservation.modelObserved,endpoint=config.chatEndpoint,finishReason=chatObservation.finishReason,response=chatObservation.response,usage=chatObservation.usage,usageCostEstimateUSD=structKeyExists(chatValidation,"costUSD") ? chatValidation.costUSD : javacast("null",""),error=chatRun.error,config=config,recordedAt=now()});
+	abort;
+}
+record({status="OBSERVED",operation="chat",validated=true,passed=false,requestsMade=1,modelRequested=config.chatModel,modelObserved=chatValidation.modelObserved,endpoint=config.chatEndpoint,finishReason=chatValidation.finishReason,response=chatValidation.response,usage=chatValidation.usage,usageCostEstimateUSD=chatValidation.costUSD,config=config,recordedAt=now()});
+embeddingReserveUSD=64*embeddingRate/1000000;
+budgetCheck=checkEmbeddingBudget(validation,chatValidation.costUSD,embeddingReserveUSD,ceiling);
+if(!budgetCheck.ok) {
+	record({status="BLOCKED",operation="embedding-budget-reservation",validated=true,passed=false,requestsMade=0,modelRequested=config.chatModel,modelObserved=chatValidation.modelObserved,finishReason=chatValidation.finishReason,usage=chatValidation.usage,chatCostUSD=chatValidation.costUSD,embeddingReserveUSD=embeddingReserveUSD,ceilingUSD=ceiling,reason=budgetCheck.reason,config=config,recordedAt=now()});
+	abort;
+}
+
+embeddingRun=requestEmbedding(config,key,validation,embeddingRate);
+embeddingObservation=embeddingRun.observation;
+embeddingValidation=embeddingRun.validation;
+if(!embeddingRun.ok) {
+	record({status="ERROR",operation="embedding",validated=false,passed=false,requestsMade=1,modelRequested=config.embeddingModel,modelObserved=embeddingObservation.modelObserved,endpoint=config.embeddingEndpoint,dimensions=embeddingObservation.dimensions,usage=embeddingObservation.usage,error=embeddingRun.error,config=config,recordedAt=now()});
+	abort;
+}
+record({status="OBSERVED",operation="embedding",validated=true,passed=false,requestsMade=1,modelRequested=config.embeddingModel,modelObserved=embeddingValidation.modelObserved,endpoint=config.embeddingEndpoint,dimensions=embeddingValidation.dimensions,usage=embeddingValidation.usage,usageCostEstimateUSD=embeddingValidation.costUSD,config=config,recordedAt=now()});
+summaryRun=summarizeProbe(validation,chatValidation,embeddingValidation,ceiling);
+if(!summaryRun.ok) {
+	record({status="BLOCKED",operation="known-total-cost",validated=true,passed=false,requestsMade=0,providerRequestsMade=2,modelRequested={chat=config.chatModel,embedding=config.embeddingModel},modelObserved={chat=chatValidation.modelObserved,embedding=embeddingValidation.modelObserved},costsUSD={chat=chatValidation.costUSD,embedding=embeddingValidation.costUSD},ceilingUSD=ceiling,reason=summaryRun.reason,config=config,recordedAt=now()});
+	abort;
+}
+summary=summaryRun.summary;
+table="p00_provider_" & lCase(replace(createUUID(),"-","","all"));
+roundtrip=runPgvectorRoundtrip(table,embeddingValidation.vector);
+if(!roundtrip.ok) {
+	record({status="ERROR",operation="pgvector-roundtrip",passed=false,requestsMade=0,providerRequestsMade=2,modelRequested={chat=config.chatModel,embedding=config.embeddingModel},modelObserved={chat=chatValidation.modelObserved,embedding=embeddingValidation.modelObserved},costsUSD={chat=chatValidation.costUSD,embedding=embeddingValidation.costUSD,total=summary.totalCostUSD},error=roundtrip.error,config=config,recordedAt=now()});
+	abort;
+}
+record({status="PASS",operation="chat-embedding-pgvector-roundtrip",passed=true,requestsMade=2,modelRequested={chat=config.chatModel,embedding=config.embeddingModel},modelObserved={chat=chatValidation.modelObserved,embedding=embeddingValidation.modelObserved},finishReason=chatValidation.finishReason,dimensions=embeddingValidation.dimensions,resultCount=roundtrip.resultCount,costsUSD={chat=summary.chatCostUSD,embedding=summary.embeddingCostUSD,total=summary.totalCostUSD},config=config,recordedAt=now()});

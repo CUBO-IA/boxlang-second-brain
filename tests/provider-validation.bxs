@@ -1,0 +1,67 @@
+import secondBrain.ProviderProbeValidation;
+
+validation = new ProviderProbeValidation();
+chatModel = "gpt-6-luna";
+embeddingModel = "text-embedding-3-small";
+chatRate = 1000;
+embeddingRate = 1000;
+ceiling = 0.1;
+expected = "P00_PROVIDER_PROBE_OK";
+
+function assertChatRejected(required struct response, required string label) {
+	var rejected=false;
+	try { validation.validateChat(arguments.response,chatModel,expected,chatRate,chatRate); }
+	catch(any failure) { rejected=true; }
+	if(!rejected) throw(message="Accepted invalid synthetic chat: #arguments.label#");
+}
+
+function assertChatBudgetRejected(required numeric cost, required numeric reserve, required numeric limit) {
+	var rejected=false;
+	try { validation.ensureChatBudget(arguments.cost,arguments.reserve,arguments.limit); }
+	catch(any failure) { rejected=true; }
+	if(!rejected) throw(message="Observed chat cost plus embedding reservation did not block continuation");
+}
+
+function assertEmbeddingRejected(required any response, required string label) {
+	var rejected=false;
+	try { validation.validateEmbedding(arguments.response,embeddingModel,embeddingRate); }
+	catch(any failure) { rejected=true; }
+	if(!rejected) throw(message="Accepted invalid synthetic embedding: #arguments.label#");
+}
+
+function assertSummaryRejected(required struct chat, required struct embedding, required numeric limit) {
+	var rejected=false;
+	try { validation.summarize(arguments.chat,arguments.embedding,arguments.limit); }
+	catch(any failure) { rejected=true; }
+	if(!rejected) throw(message="Accepted synthetic total cost above ceiling");
+}
+
+invalidChats = [
+	{label="empty content",response={model=chatModel,choices=[{message={content=""},finish_reason="stop"}],usage={prompt_tokens=8,completion_tokens=3}}},
+	{label="missing usage",response={model=chatModel,choices=[{message={content=expected},finish_reason="stop"}]}},
+	{label="negative usage",response={model=chatModel,choices=[{message={content=expected},finish_reason="stop"}],usage={prompt_tokens=-1,completion_tokens=3}}},
+	{label="fractional usage",response={model=chatModel,choices=[{message={content=expected},finish_reason="stop"}],usage={prompt_tokens=1.5,completion_tokens=3}}},
+	{label="string usage",response={model=chatModel,choices=[{message={content=expected},finish_reason="stop"}],usage={prompt_tokens="8",completion_tokens=3}}},
+	{label="non-finite usage",response={model=chatModel,choices=[{message={content=expected},finish_reason="stop"}],usage={prompt_tokens=createObject("java","java.lang.Double").parseDouble("NaN"),completion_tokens=3}}},
+	{label="observed model fallback",response={model="fallback-model",choices=[{message={content=expected},finish_reason="stop"}],usage={prompt_tokens=8,completion_tokens=3}}},
+	{label="non-stop finish reason",response={model=chatModel,choices=[{message={content=expected},finish_reason="length"}],usage={prompt_tokens=8,completion_tokens=3}}}
+];
+for(testCase in invalidChats) assertChatRejected(testCase.response,testCase.label);
+assertChatRejected(invalidChats[2].response,"invalid chat cannot continue toward embedding");
+
+validChat=validation.validateChat({model=chatModel,choices=[{message={content=expected},finish_reason="stop"}],usage={prompt_tokens=10,completion_tokens=4,total_tokens=14}},chatModel,expected,chatRate,chatRate);
+assertChatBudgetRejected(validChat.costUSD,64*embeddingRate/1000000,0.02);
+validation.ensureChatBudget(validChat.costUSD,64*embeddingRate/1000000,ceiling);
+
+vector=[];
+for(i=1;i<=1536;i++) vector.append(0.125);
+validEmbedding=validation.validateEmbedding({model=embeddingModel,data=[{embedding=vector}],usage={prompt_tokens=20,total_tokens=20}},embeddingModel,embeddingRate);
+assertEmbeddingRejected({model="fallback-model",data=[{embedding=vector}],usage={prompt_tokens=20}},"observed model fallback");
+assertEmbeddingRejected({model=embeddingModel,data=[{embedding=vector}]},"missing usage");
+summary=validation.summarize(validChat,validEmbedding,ceiling);
+if(!validChat.validated || !validEmbedding.validated || validChat.modelObserved!=chatModel || validEmbedding.modelObserved!=embeddingModel || validChat.finishReason!="stop" || summary.status!="VALIDATED_LOGIC" || summary.passed || summary.status=="PASS" || summary.totalCostUSD>ceiling) throw(message="Valid synthetic responses must yield a logical summary, never a provider PASS");
+expensiveEmbedding=validEmbedding;
+expensiveEmbedding.costUSD=ceiling;
+assertSummaryRejected(validChat,expensiveEmbedding,ceiling);
+
+println("OK: pure synthetic provider validation rejects invalid chat/model/usage/budget before continuation; valid responses yield logical-only summary");

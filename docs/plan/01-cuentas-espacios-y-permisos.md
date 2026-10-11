@@ -1,6 +1,6 @@
 # Fase 01 — Cuentas, espacios y permisos
 
-**Estado:** Pendiente. **Dependencia:** [fase 00](00-viabilidad-y-decisiones.md) verificada. [Índice](README.md).
+**Estado:** Verificada y completa para el entorno aislado acreditado. Sol aprobó calidad y gate de fase 01 en su [re-revisión R1](../../.superpowers/sdd/01-cuentas-espacios-y-permisos/sol-rereview-1.md), fechada 2026-10-11. Fase 00 sigue Bloqueada por evidencia externa/técnica pendiente; la autorización excepcional de fase 01 no cambia ese estado. [Índice](README.md).
 
 **Fuente:** [usuarios y espacios](../specification/02-usuarios-y-espacios.md) y [seguridad](../specification/06-arquitectura-y-seguridad.md). **Cobertura:** V01–V03 y V15.
 
@@ -19,13 +19,13 @@ Una persona puede registrarse, entrar, crear un espacio e incorporar cuentas exi
 
 ## Backend BoxLang: tareas concretas
 
-- [ ] **01.1 — Persistencia.** Migraciones versionadas para cuentas, espacios, membresías y sesiones según la decisión de fase 00. Unicidad de correo con normalización definida y una membresía por usuario/espacio. Reejecutar migraciones no duplica datos.
-- [ ] **01.2 — Registro.** Validar correo y contraseña en backend, proteger contraseña mediante un algoritmo apropiado verificado y nunca devolver hash/credenciales. Definir respuesta no enumeradora para un correo ya registrado.
-- [ ] **01.3 — Sesión.** Implementar login, usuario/sesión actual y logout. Configurar expiración, cookie segura para el entorno y protección de operaciones mutables según el transporte elegido; mensajes genéricos y límites de abuso.
-- [ ] **01.4 — Espacios.** Crear espacio con membresía administradora consistente; listar solo los propios. Verificar membresía al consultar un espacio aunque el usuario pertenezca a otros.
-- [ ] **01.5 — Miembros.** Incorporar por correo/rol si la cuenta existe. Si no existe, no guardar invitación; ambas situaciones devuelven igual estado y «Solicitud procesada». La pantalla no puede prometer envío de email.
-- [ ] **01.6 — Roles.** Cambiar rol/retirar miembro solo como administrador. Proteger al último administrador, incluso con dos cambios concurrentes.
-- [ ] **01.7 — Autorización común.** Centralizar la comprobación existente o mínima que usarán documentos, chats, citas, tareas y grafo. Releer la autorización efectiva en peticiones posteriores a un cambio; no conservar un rol obsoleto como autoridad.
+- [x] **01.1 — Persistencia.** Migración ejecutable versionada, normalización de correo a minúsculas, unicidad y una membresía por usuario/espacio; replay comprobado.
+- [x] **01.2 — Registro.** Validación backend, PBKDF2-HMAC-SHA256 y respuesta genérica para registro duplicado; sin hashes/credenciales en respuestas.
+- [x] **01.3 — Sesión.** Login/current/logout, expiración persistida, cookie según origen, Origin+CSRF en mutaciones y límites persistidos contra abuso.
+- [x] **01.4 — Espacios.** Creación atómica con rol admin, listado propio y autorización efectiva al consultar detalle.
+- [x] **01.5 — Miembros.** Incorporación genérica con mismo estado/mensaje, sin invitación ni estado pendiente y sin prometer email.
+- [x] **01.6 — Roles.** Gestión admin-only, transacción/row lock y protección concurrente del último administrador.
+- [x] **01.7 — Autorización común.** `AccountService.authorize` relee sesión/membresía efectiva y se usa para detalle, gestión y mutaciones de membresía.
 
 ## Operaciones mínimas del backend
 
@@ -36,33 +36,48 @@ Las rutas, métodos y nombres definitivos se documentan al implementar; esta tab
 | Registro/login | Pública dentro del entorno privado, limitada contra abuso | Sesión o respuesta segura sin enumeración |
 | Sesión actual/logout | Sesión vigente según operación | Usuario permitido o invalidación efectiva |
 | Crear/listar espacios | Usuario autenticado | Solo espacios del usuario; creación con administrador |
-| Listar miembros | Regla de lectura definida en el contrato de fase 00 | Sin revelar cuentas ajenas al espacio |
+| Listar miembros | Administrador del espacio | Sin revelar cuentas ajenas al espacio |
 | Incorporar/cambiar rol/retirar | Administrador del espacio | Cambio autorizado o rechazo; nunca cero administradores |
 
 ## Frontend Next.js: pantallas y comportamiento
 
-- [ ] Registro y login con validación útil, mensajes de backend, carga y prevención de envíos repetidos; no implementar otra política de seguridad en Next.js.
-- [ ] Selector de espacio con estado vacío y creación. El cambio de espacio descarta el estado visual del anterior y evita mostrar respuestas tardías de ese espacio.
-- [ ] Gestión de miembros/roles para administradores con confirmación de cambios destructivos y respuesta genérica de incorporación.
-- [ ] Textos ES/EN y navegación por teclado; advertir que el correo declarado no verifica identidad y que no hay recuperación por email.
-- [ ] Manejar sesión expirada y acceso retirado sin dejar contenido protegido visible tras detectar el cambio.
+- [x] Registro y login con validación útil, mensajes backend, estado de carga y prevención de envíos repetidos.
+- [x] Selector vacío/creación; cambiar de espacio descarta contenido anterior y evita aplicar respuestas obsoletas.
+- [x] Gestión de miembros/roles admin-only, confirmación de retirada y respuesta genérica.
+- [x] Textos ES/EN, formularios/controles accesibles por teclado y advertencias de identidad/recuperación.
+- [x] Expiración/revocación limpian contenido protegido al detectar la pérdida de acceso.
 
 ## Pruebas de cierre
 
-| Prueba | Acción | Resultado obligatorio |
-|---|---|---|
-| P01.1 | Registrar, login, logout y reutilizar sesión vieja | Acceso válido antes del logout y rechazado después |
-| P01.2 | Login incorrecto/cuenta ausente y registro repetido | Respuestas no enumeradoras; límites de intentos comprobados |
-| P01.3 | Incorporar cuenta existente e inexistente | Mismo estado/mensaje; solo la existente obtiene membresía; sin invitación pendiente |
-| P01.4 | Probar administrador/editor/lector/ajeno en gestión | Solo administrador modifica membresías; ajeno no accede |
-| P01.5 | Retirar/demover al último administrador; repetir en concurrencia | Espacio conserva al menos un administrador |
-| P01.6 | Retirar membresía con sesión abierta y repetir petición | Rechazo inmediato en backend; frontend comunica pérdida de acceso |
-| P01.7 | Manipular usuario, espacio o rol enviado por cliente | Sin ampliación de permisos ni acceso cruzado |
+| Prueba | Acción | Resultado obligatorio | Task 1 |
+|---|---|---|---|
+| P01.1 | Registrar, login, logout y reutilizar sesión vieja | Acceso válido antes del logout y rechazado después | Aprobada; incluye expiración en DB/API |
+| P01.2 | Login incorrecto/cuenta ausente y registro repetido | Respuestas no enumeradoras; límites de intentos comprobados | Aprobada; contador persistido y límite 429 |
+| P01.3 | Incorporar cuenta existente e inexistente | Mismo estado/mensaje; solo la existente obtiene membresía; sin invitación pendiente | Aprobada; HTTP 200 y `Solicitud procesada` |
+| P01.4 | Probar administrador/editor/lector/ajeno en gestión | Solo administrador modifica membresías; ajeno no accede | Aprobada mediante API real |
+| P01.5 | Retirar/demover al último administrador; repetir en concurrencia | Espacio conserva al menos un administrador | Aprobada, incluido `Promise.all` |
+| P01.6 | Retirar membresía con sesión abierta y repetir petición | Rechazo inmediato en backend; frontend comunica pérdida de acceso | Aprobada por API y navegador aislado ES/EN |
+| P01.7 | Manipular usuario, espacio o rol enviado por cliente | Sin ampliación de permisos ni acceso cruzado | Aprobada; incluye Origin, CSRF y payloads inválidos |
 
 ## Entregables y criterio de finalización
 
-- [ ] Migraciones ejecutables, operaciones documentadas y pantallas conectadas a BoxLang con persistencia real.
-- [ ] Comprobaciones ejecutables de roles/sesiones y datos sintéticos de dos espacios; evidencia de navegador ES/EN.
-- [ ] P01.1–P01.7 aprobadas y registro de cierre añadido; repetir autorizaciones al incorporar recursos futuros.
+- [x] Migración ejecutable, operaciones documentadas y pantallas conectadas a BoxLang con persistencia real.
+- [x] Comprobaciones de roles/sesiones con DB/API real y evidencia browser ES/EN, teclado, dos espacios y revocación.
+- [x] P01.1–P01.7 pasan localmente según el informe Task 1 aprobado; Sol aceptó esos resultados sin repetir suites. La Ronda 1 de navegador fue aprobada: logout HTTP 200 en otra pestaña; creación desde pantalla obsoleta recibe 401; panel/espacios/miembros desaparecen, aparece login con aviso, no se crea el espacio y se elimina la cuenta sintética.
+- [x] Cierre autorizado por Sol (2026-10-11): commit revisado `46d9cd31f78392f34e200791d7c4c3c5d409f214`; R1 cerrado. El wiring de `APP_ORIGIN` ahora deriva del puerto frontend (`3000` por defecto), conserva prioridad para valor explícito y se comprobó `3002` en el worktree. Ver [registro de cierre](#registro-de-cierre).
+
+## Operaciones entregadas
+
+Las rutas same-origin, métodos, estados, cookies y límites de seguridad se detallan en el [README](../../README.md). El migrador se ejecuta con `docker compose -p second-brain-phase01 exec boxlang boxlang backend/migrations/migrate.bxs`; reejecutarlo informa `Migration 1 already applied`. El servicio HTTP de BoxLang vive en `backend/api/account.bxm`; el transporte Next.js es allowlist fija y no contiene autorización de negocio.
+
+Decisiones exactas: PBKDF2-HMAC-SHA256, 600.000 iteraciones, salt 16 bytes y output 32; sesión 32 bytes aleatorios, solo hash SHA-256 persistido, 12 horas; cookie HttpOnly/SameSite=Lax/Path=/, Secure para `APP_ORIGIN` HTTPS y excepción HTTP limitada a loopback; Origin exacto y CSRF para mutaciones; 10 intentos por correo en ventana persistida de 15 minutos. Sin email, recuperación, invitaciones ni llamadas de IA.
+
+## Registro de cierre
+
+- Base revisada: `46d9cd31f78392f34e200791d7c4c3c5d409f214`; BoxLang 1.18.0, bx-ai 3.5.0, Compose aislado `second-brain-phase01`.
+- Aprobación independiente: Sol, [registro de revisión](evidence/phase01-review.md), 2026-10-11. Aprobó calidad/gate, cerró R1 y autorizó **Verificada**; aceptó los resultados P01.1–P01.7 y la evidencia de navegador descrita arriba. No se repitieron las pruebas de navegador ni las suites.
+- Cambios acotados de cierre: `APP_ORIGIN` deriva de `FRONTEND_PORT` y admite override explícito; README/.env.example alineados. Comprobaciones de este cierre: `docker compose config` filtrado solo a `APP_ORIGIN` dio `http://127.0.0.1:3002` con `FRONTEND_PORT=3002` y respetó `https://brain.example.test` explícito; `docker compose -p second-brain-phase01 exec -T boxlang boxlang tests/smoke.bxs` → OK; `tests/provider-validation.bxs` → OK; `git diff --check` → OK.
+- El probe proveedor es evidencia aparte, no requisito de autenticación ni de este gate. Consulte [evidencia P00](evidence/provider-phase00.md): llamadas reales válidas, roundtrip pgvector fallido. Fase 00 sigue bloqueada; el avance excepcional de fase 01 no valida P00 ni hostname/TLS.
+- Entrega en la carpeta original: cambios revisados copiados sin merge/push y sin alterar `.env`, `DESIGN.md`, fases 02–09 ni roles. `docker compose up -d --build --wait` dejó los tres servicios saludables; `docker compose exec -T boxlang boxlang backend/migrations/migrate.bxs` aplicó la migración 1; `docker compose exec -T boxlang boxlang tests/smoke.bxs` pasó. `GET /api/auth/current` por el transporte Next.js rechazó acceso anónimo con `401`. Frontend disponible en `http://127.0.0.1:3000`. No se apagó la computadora.
 
 **No se incluye:** verificación/recuperación por email, registro público en internet ni acceso administrativo a chats privados. **Siguiente:** [fase 02](02-biblioteca-tareas-y-presupuesto.md).

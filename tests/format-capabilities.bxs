@@ -1,0 +1,12 @@
+import ortus.boxlang.runtime.BoxRuntime;
+import ortus.boxlang.runtime.scopes.Key;
+
+modules = BoxRuntime.getInstance().getModuleService();
+for ( name in [ "bxai", "spreadsheet", "word" ] ) {
+	if ( modules.hasModule( Key.of( name ) ) && modules.getModuleRecord( Key.of( name ) ).isActivated() ) {
+		println( "AVAILABLE: #name#" );
+	} else {
+		println( "NOT_INSTALLED: #name#" );
+	}
+}
+println( "Installed bx-ai loader source checked: MarkdownLoader, TextLoader, JSONLoader, CSVLoader, PDFLoader; no DOCX/XLSX loader class exists in bx-ai 3.5.0+19." );

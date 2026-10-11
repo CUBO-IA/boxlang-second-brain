@@ -1,0 +1,89 @@
+/** Pure validation for the opt-in provider probe; it never makes provider calls. */
+class {
+	function isFiniteNumber(required any value) {
+		if(!isInstanceOf(arguments.value,"java.lang.Number")) return false;
+		try {
+			var decimal=createObject("java","java.math.BigDecimal").init(arguments.value.toString());
+			return createObject("java","java.lang.Double").isFinite(decimal.doubleValue());
+		} catch(any failure) { return false; }
+	}
+
+	private boolean function validCount(required any value) {
+		if(!isFiniteNumber(arguments.value)) return false;
+		try {
+			var decimal=createObject("java","java.math.BigDecimal").init(arguments.value.toString());
+			return decimal.signum()>=0 && decimal.stripTrailingZeros().scale()<=0;
+		} catch(any failure) { return false; }
+	}
+
+	struct function observeChat(required any response) {
+		var observation={modelObserved="",finishReason="",response="",usage={}};
+		if(!isStruct(arguments.response)) return observation;
+		if(structKeyExists(arguments.response,"model")) observation.modelObserved=arguments.response.model;
+		if(structKeyExists(arguments.response,"usage")) observation.usage=arguments.response.usage;
+		if(structKeyExists(arguments.response,"choices") && isArray(arguments.response.choices) && !arguments.response.choices.isEmpty() && isStruct(arguments.response.choices[1])) {
+			var choice=arguments.response.choices[1];
+			if(structKeyExists(choice,"finish_reason")) observation.finishReason=choice.finish_reason;
+			if(structKeyExists(choice,"message") && isStruct(choice.message) && structKeyExists(choice.message,"content")) observation.response=choice.message.content;
+		}
+		return observation;
+	}
+
+	struct function observeEmbedding(required any response) {
+		var observation={modelObserved="",usage={},dimensions=0};
+		if(!isStruct(arguments.response)) return observation;
+		if(structKeyExists(arguments.response,"model")) observation.modelObserved=arguments.response.model;
+		if(structKeyExists(arguments.response,"usage")) observation.usage=arguments.response.usage;
+		if(structKeyExists(arguments.response,"data") && isArray(arguments.response.data) && !arguments.response.data.isEmpty() && isStruct(arguments.response.data[1]) && structKeyExists(arguments.response.data[1],"embedding") && isArray(arguments.response.data[1].embedding)) observation.dimensions=arguments.response.data[1].embedding.len();
+		return observation;
+	}
+
+	struct function validateChat(
+		required any response,
+		required string requestedModel,
+		required string expectedContent,
+		required numeric inputRate,
+		required numeric outputRate
+	) {
+		if(!isStruct(arguments.response) || !structKeyExists(arguments.response,"model") || arguments.response.model!=arguments.requestedModel) throw(message="Chat observed model does not match requested model");
+		if(!structKeyExists(arguments.response,"choices") || !isArray(arguments.response.choices) || arguments.response.choices.len()!=1 || !isStruct(arguments.response.choices[1])) throw(message="Chat response must contain exactly one choice");
+		var choice=arguments.response.choices[1];
+		if(!structKeyExists(choice,"message") || !isStruct(choice.message) || !structKeyExists(choice.message,"content") || isNull(choice.message.content) || trim(toString(choice.message.content))!=arguments.expectedContent) throw(message="Chat response content is empty or does not match the useful probe result");
+		if(!structKeyExists(choice,"finish_reason") || choice.finish_reason!="stop") throw(message="Chat finish_reason must be stop");
+		if(!structKeyExists(arguments.response,"usage") || !isStruct(arguments.response.usage)) throw(message="Chat usage is missing or invalid");
+		var usage=arguments.response.usage;
+		if(!structKeyExists(usage,"prompt_tokens") || !validCount(usage.prompt_tokens) || !structKeyExists(usage,"completion_tokens") || !validCount(usage.completion_tokens)) throw(message="Chat usage token counts must be finite non-negative integers");
+		if(structKeyExists(usage,"total_tokens") && (!validCount(usage.total_tokens) || usage.total_tokens!=usage.prompt_tokens+usage.completion_tokens)) throw(message="Chat total_tokens is invalid or inconsistent");
+		if(!isFiniteNumber(arguments.inputRate) || arguments.inputRate<=0 || !isFiniteNumber(arguments.outputRate) || arguments.outputRate<=0) throw(message="Chat rates must be finite and positive");
+		var cost=(usage.prompt_tokens*arguments.inputRate+usage.completion_tokens*arguments.outputRate)/1000000;
+		if(!isFiniteNumber(cost) || cost<0) throw(message="Chat usage cost is not finite");
+		return {validated=true,requestedModel=arguments.requestedModel,modelObserved=arguments.response.model,finishReason=choice.finish_reason,response=choice.message.content,usage=usage,costUSD=cost};
+	}
+
+	void function ensureChatBudget(required numeric chatCostUSD, required numeric embeddingReserveUSD, required numeric ceilingUSD) {
+		if(!isFiniteNumber(arguments.chatCostUSD) || arguments.chatCostUSD<0 || !isFiniteNumber(arguments.embeddingReserveUSD) || arguments.embeddingReserveUSD<0 || !isFiniteNumber(arguments.ceilingUSD) || arguments.ceilingUSD<=0) throw(message="Chat cost, embedding reserve and ceiling must be finite non-negative amounts");
+		if(arguments.chatCostUSD+arguments.embeddingReserveUSD>arguments.ceilingUSD) throw(message="Observed chat cost plus embedding reserve exceeds configured ceiling");
+	}
+
+	struct function validateEmbedding(required any response, required string requestedModel, required numeric inputRate, numeric expectedDimensions=1536) {
+		if(!isStruct(arguments.response) || !structKeyExists(arguments.response,"model") || arguments.response.model!=arguments.requestedModel) throw(message="Embedding observed model does not match requested model");
+		if(!structKeyExists(arguments.response,"data") || !isArray(arguments.response.data) || arguments.response.data.len()!=1 || !isStruct(arguments.response.data[1]) || !structKeyExists(arguments.response.data[1],"embedding") || !isArray(arguments.response.data[1].embedding)) throw(message="Embedding response must contain exactly one vector");
+		var vector=arguments.response.data[1].embedding;
+		if(vector.len()!=arguments.expectedDimensions) throw(message="Expected #arguments.expectedDimensions# embedding dimensions, observed #vector.len()#");
+		for(var value in vector) if(!isFiniteNumber(value)) throw(message="Embedding vector contains a non-finite or non-numeric value");
+		if(!structKeyExists(arguments.response,"usage") || !isStruct(arguments.response.usage) || !structKeyExists(arguments.response.usage,"prompt_tokens") || !validCount(arguments.response.usage.prompt_tokens)) throw(message="Embedding usage prompt_tokens must be a finite non-negative integer");
+		if(structKeyExists(arguments.response.usage,"total_tokens") && !validCount(arguments.response.usage.total_tokens)) throw(message="Embedding total_tokens must be a finite non-negative integer");
+		if(!isFiniteNumber(arguments.inputRate) || arguments.inputRate<=0) throw(message="Embedding rate must be finite and positive");
+		var cost=arguments.response.usage.prompt_tokens*arguments.inputRate/1000000;
+		if(!isFiniteNumber(cost) || cost<0) throw(message="Embedding usage cost is not finite");
+		return {validated=true,requestedModel=arguments.requestedModel,modelObserved=arguments.response.model,dimensions=vector.len(),vector=vector,usage=arguments.response.usage,costUSD=cost};
+	}
+
+	struct function summarize(required struct chat, required struct embedding, required numeric ceilingUSD) {
+		if(!arguments.chat.validated || !arguments.embedding.validated || arguments.chat.requestedModel!=arguments.chat.modelObserved || arguments.chat.finishReason!="stop" || arguments.embedding.requestedModel!=arguments.embedding.modelObserved || arguments.embedding.dimensions!=1536) throw(message="Both requested models must have validated observed responses");
+		if(!isFiniteNumber(arguments.ceilingUSD) || arguments.ceilingUSD<=0 || arguments.ceilingUSD>1 || !isFiniteNumber(arguments.chat.costUSD) || arguments.chat.costUSD<0 || !isFiniteNumber(arguments.embedding.costUSD) || arguments.embedding.costUSD<0) throw(message="Both operation costs and the ceiling must be finite non-negative amounts");
+		var totalCost=arguments.chat.costUSD+arguments.embedding.costUSD;
+		if(!isFiniteNumber(totalCost) || totalCost>arguments.ceilingUSD) throw(message="Known chat plus embedding cost exceeds configured ceiling");
+		return {status="VALIDATED_LOGIC",passed=false,chatCostUSD=arguments.chat.costUSD,embeddingCostUSD=arguments.embedding.costUSD,totalCostUSD=totalCost,ceilingUSD=arguments.ceilingUSD};
+	}
+}

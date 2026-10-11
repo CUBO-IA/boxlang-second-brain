@@ -1,0 +1,10 @@
+run = getSystemSetting("P01_RUN", "");
+if ( reFind("^[a-z0-9-]{1,40}$", run) != 1 ) throw(message="Refusing cleanup without a unique P01_RUN slug");
+
+for ( role in [ "ana", "bruno", "carla", "diana", "abuse", "absent", "expiry", "no-origin", "oversize" ] ) {
+	email = "p01-#run#-#role#@example.invalid";
+	subject = lCase(hash(email, "SHA-256"));
+	queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [ subject ]);
+	queryExecute("DELETE FROM accounts WHERE email = ?", [ email ]);
+}
+println("OK: removed only P01 synthetic accounts and their dependent sessions/spaces/memberships/rate-limit rows for #run#.");

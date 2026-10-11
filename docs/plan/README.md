@@ -2,11 +2,11 @@
 
 Fecha: **11 de octubre de 2026**. Fuente de alcance: [especificación](../specification/README.md).
 
-Este plan organiza trabajo futuro; **no inicia la implementación ni acredita funcionalidades existentes**. Cada fase se autoriza por separado. Las fases intermedias son incrementos verificables, no una reducción de la primera entrega: esta debe cumplir toda la especificación, sin simulaciones.
+Este plan organiza el trabajo por fases; cada una se autoriza por separado. Las fases intermedias son incrementos verificables, no una reducción de la primera entrega: esta debe cumplir toda la especificación, sin simulaciones.
 
 ## Punto de partida
 
-Ya existen Docker Compose, PostgreSQL/pgvector, el módulo Pure BoxLang, BoxLang AI, un frontend Next.js y `GET /api/health.bxm`. `tests/smoke.bxs` comprueba infraestructura y `tests/http.mjs` comprueba HTTP y la conexión desde Next.js. No hay todavía lógica de negocio, tablas de aplicación ni ingesta.
+La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`. La fase 01 añade cuentas, sesiones, espacios, membresías, autorización efectiva y su interfaz; la migración versionada crea las tablas de cuentas. La fase 00 conserva capacidades locales probadas y una revisión local aprobada, pero sigue bloqueada por evidencia externa de proveedor y operación. No hay ingesta ni funcionalidades de biblioteca/chat.
 
 - **Backend:** BoxLang implementa autenticación, autorización, persistencia, ingesta, tareas, recuperación, respuestas, relaciones y presupuesto. El núcleo de conocimiento permanece reutilizable e independiente de HTTP y Next.js.
 - **Frontend:** Next.js, TypeScript y App Router implementan pantallas, interacción, grafo y visores. Si se necesita una capa de transporte en Next.js, solo delega en BoxLang; no se convierte en un segundo backend de negocio.
@@ -20,8 +20,8 @@ Las dependencias son acumulativas: cerrar una fase antes de avanzar a la siguien
 
 | Fase | Resultado verificable | Estado |
 |---|---|---|
-| [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Modelos, filtros vectoriales, loaders y ubicaciones probados; diseño mínimo y límites fijados | Pendiente |
-| [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Pendiente |
+| [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Capacidades locales revisadas; evidencia externa y condiciones de operación aún requeridas | Bloqueada |
+| [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Verificada |
 | [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | Pendiente |
 | [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | Pendiente |
 | [04 — Formatos y previsualizadores](04-formatos-y-previsualizadores.md) | PDF, MD, JSON, código, DOCX, CSV y XLSX con consulta, coordenadas y visor funcional | Pendiente |

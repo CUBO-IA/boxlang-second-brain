@@ -12,6 +12,7 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     volumes:
       - ./frontend/app:/app/app:ro
+      - ./tests:/tests:ro
     depends_on:
       boxlang:
         condition: service_healthy
@@ -29,6 +30,15 @@ services:
     environment:
       BOXLANG_CONFIG: /modules/second-brain/config/boxlang.json
       REWRITES: "false"
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${FRONTEND_PORT:-3000}}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      P00_ALLOW_PROVIDER_CALLS: ${P00_ALLOW_PROVIDER_CALLS:-NO}
+      P00_MAX_USD: ${P00_MAX_USD:-1}
+      P00_PRICE_DATE: ${P00_PRICE_DATE:-2026-10-11}
+      P00_PRICE_REFERENCE: ${P00_PRICE_REFERENCE:-https://developers.openai.com/api/docs/pricing}
+      P00_CHAT_INPUT_USD_PER_MILLION: ${P00_CHAT_INPUT_USD_PER_MILLION:-0.10}
+      P00_CHAT_OUTPUT_USD_PER_MILLION: ${P00_CHAT_OUTPUT_USD_PER_MILLION:-0.50}
+      P00_EMBED_USD_PER_MILLION: ${P00_EMBED_USD_PER_MILLION:-0.02}
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-second_brain}
       POSTGRES_USER: ${POSTGRES_USER:-second_brain}

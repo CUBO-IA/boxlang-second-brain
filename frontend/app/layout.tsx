@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Second Brain · Conexión",
-  description: "Prueba de conexión entre Next.js y BoxLang.",
+  title: "Second Brain · Espacios",
+  description: "Cuentas y espacios de conocimiento compartido.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

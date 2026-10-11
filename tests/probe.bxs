@@ -1,0 +1,4 @@
+import secondBrain.Probe;
+
+result = new Probe().vectorLifecycle();
+println( result );

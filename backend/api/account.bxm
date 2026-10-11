@@ -1,0 +1,62 @@
+<bx:script>
+    requestData = getHTTPRequestData();
+    requestHeaders = requestData.headers;
+    body = {};
+    invalidRequest = "";
+    bodyText = structKeyExists( requestData, "content" ) && !isNull( requestData.content ) ? toString( requestData.content ) : "";
+    sessionToken = "";
+    sessionCookieHeader = structKeyExists( requestHeaders, "Cookie" ) ? toString( requestHeaders[ "Cookie" ] ) : "";
+    duplicateSessionCookie = false;
+    if ( len( sessionCookieHeader ) <= 4096 ) {
+        for ( cookiePair in listToArray( sessionCookieHeader, ";" ) ) {
+            equalsAt = find( "=", cookiePair );
+            if ( equalsAt > 1 && lCase( trim( left( cookiePair, equalsAt - 1 ) ) ) == "sb_session" ) {
+                if ( len( sessionToken ) ) duplicateSessionCookie = true;
+                else sessionToken = trim( mid( cookiePair, equalsAt + 1, len( cookiePair ) ) );
+            }
+        }
+    } else {
+        invalidRequest = "Revisa los datos enviados.";
+    }
+    if ( duplicateSessionCookie ) sessionToken = "";
+
+    if ( len( bodyText ) > 8192 ) {
+        invalidRequest = "Revisa los datos enviados.";
+    } else if ( len( bodyText ) ) {
+        contentType = structKeyExists( requestHeaders, "Content-Type" ) ? toString( requestHeaders[ "Content-Type" ] ) : "";
+        if ( !findNoCase( "application/json", contentType ) ) {
+            invalidRequest = "Revisa los datos enviados.";
+        } else {
+            try {
+                body = jsonDeserialize( bodyText );
+                if ( !isStruct( body ) ) invalidRequest = "Revisa los datos enviados.";
+            } catch ( any parseFailure ) {
+                invalidRequest = "Revisa los datos enviados.";
+            }
+        }
+    }
+
+    request = {
+        method: requestData.method,
+        body: body,
+        origin: structKeyExists( requestHeaders, "Origin" ) ? toString( requestHeaders[ "Origin" ] ) : "",
+        csrfToken: structKeyExists( requestHeaders, "X-CSRF-Token" ) ? toString( requestHeaders[ "X-CSRF-Token" ] ) : "",
+        sessionToken: sessionToken,
+        spaceId: structKeyExists( url, "spaceId" ) ? toString( url.spaceId ) : "",
+        memberId: structKeyExists( url, "memberId" ) ? toString( url.memberId ) : ""
+    };
+
+    if ( len( invalidRequest ) ) {
+        response = { status: 400, body: { message: invalidRequest } };
+    } else {
+        service = new secondBrain.AccountService();
+        operation = structKeyExists( url, "op" ) ? toString( url.op ) : "";
+        response = service.handle( operation, request );
+    }
+
+    bx:content type="application/json; charset=utf-8";
+    bx:header statusCode=response.status;
+    bx:header name="Cache-Control" value="no-store";
+    if ( structKeyExists( response, "setCookie" ) ) bx:header name="Set-Cookie" value=response.setCookie;
+    writeOutput( jsonSerialize( response.body ) );
+</bx:script>

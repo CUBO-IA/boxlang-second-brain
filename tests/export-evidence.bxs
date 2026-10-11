@@ -1,0 +1,61 @@
+// Exports the viewer's frozen source directly from local loaders/extractors.
+import secondBrain.EvidenceExtractor;
+root="/modules/second-brain/tests/fixtures/";
+extractor=new EvidenceExtractor();
+function record(required string file, required string format, required string content, required array rows, required struct location, required string label){
+	var bytes=fileReadBinary(root & arguments.file);
+	if(bytes.len()>50000000) throw(message="Source exceeds 50,000,000-byte limit: #arguments.file#");
+	return {id=arguments.file,format=arguments.format,version=1,sha256=hash(bytes,"SHA-256"),content=arguments.content,rows=arguments.rows,location=arguments.location,locationLabel=arguments.label};
+}
+function lineLocation(required string text, required numeric line, required string quote, numeric occurrence=1){
+	var sourceLines=listToArray(arguments.text,char(10),true); var sourceLine=sourceLines[arguments.line]; var offset=1;
+	for(var index=1;index<=arguments.occurrence;index++){
+		var found=find(arguments.quote,sourceLine,offset);
+		if(!found) throw(message="Quote occurrence #index# missing on line #arguments.line#");
+		if(index==arguments.occurrence) return {kind="line",start={line=arguments.line,offset=found},end={line=arguments.line,offset=found+len(arguments.quote)-1},quote=arguments.quote};
+		offset=found+len(arguments.quote);
+	}
+}
+function rows(required array keys, required array values){var output=[];for(var index=1;index<=arguments.keys.len();index++)output.append({key=arguments.keys[index],text=arguments.values[index]});return output;}
+
+files=["locations.md","locations.txt","locations.js","locations.jsondata","locations.csv","locations.pdf","locations.docx","locations.xlsx"];
+for(file in files) if(createObject("java","java.io.File").init(root & file).length()>50000000) throw(message="Source exceeds 50,000,000-byte limit before parsing: #file#");
+documents=[];
+markdown=new bxModules.bxai.models.loaders.MarkdownLoader(root & "locations.md").doLoad()[1].getContent();
+documents.append(record("locations.md","Markdown",markdown,[],lineLocation(markdown,3,"repeat phrase"),"línea 3 · ocurrencia 2"));
+text=new bxModules.bxai.models.loaders.TextLoader(root & "locations.txt").doLoad()[1].getContent();
+documents.append(record("locations.txt","TXT",text,[],lineLocation(text,3,"Exact TXT target"),"línea 3 · ocurrencia 2"));
+code=new bxModules.bxai.models.loaders.TextLoader(root & "locations.js").doLoad()[1].getContent();
+documents.append(record("locations.js","JavaScript",code,[],lineLocation(code,3,"Exact CODE target"),"línea 3 · ocurrencia 2"));
+
+jsonContent=new bxModules.bxai.models.loaders.JSONLoader(root & "locations.jsondata").doLoad()[1].getContent();
+jsonObject=jsonDeserialize(fileRead(root & "locations.jsondata","utf-8"));
+jsonRows=rows(["policy.maxDays","other.maxDays"],[toString(jsonObject.policy.maxDays),toString(jsonObject.other.maxDays)]);
+documents.append(record("locations.jsondata","JSON",jsonRows.map((row)=>"#row.key# = #row.text#").toList(char(10)),jsonRows,{kind="json-path",start={path="policy.maxDays",offset=1},end={path="policy.maxDays",offset=len(jsonRows[1].text)},quote=jsonRows[1].text},"ruta JSON · policy.maxDays · offset 1"));
+
+csvContent=new bxModules.bxai.models.loaders.CSVLoader(root & "locations.csv").doLoad()[1].getContent();
+csvLines=listToArray(trim(fileRead(root & "locations.csv","utf-8")),char(10),true);
+headers=listToArray(csvLines[1],",",true); data=listToArray(csvLines[3],",",true);
+categoryColumn=arrayFind(headers,"category"); limitColumn=arrayFind(headers,"limit");
+if(data[categoryColumn]!="meals") throw(message="CSV row/column selection mismatch");
+csvRows=[{key="header",text=csvLines[1]},{key="row2",text=csvLines[2]},{key="row3:name",text=data[categoryColumn]},{key="row3:limit",text=data[limitColumn]}];
+documents.append(record("locations.csv","CSV",csvLines.toList(char(10)),csvRows,{kind="csv-cell",start={row=3,column="limit",offset=1},end={row=3,column="limit",offset=len(data[limitColumn])},quote=data[limitColumn]},"fila 3 · columna limit · offset 1"));
+
+pdfContent=new bxModules.bxai.models.loaders.PDFLoader(root & "locations.pdf").doLoad()[1].getContent();
+pdfPages=extractor.pdfPages(root & "locations.pdf"); pdfQuote="For urgent purchases, attach prior authorization."; pdfOffset=find(pdfQuote,pdfPages[2]);
+pdfKeys=[];for(index=1;index<=pdfPages.len();index++)pdfKeys.append("page#index#");
+pdfRows=rows(pdfKeys,pdfPages);
+documents.append(record("locations.pdf","PDF",pdfPages.toList(char(10)),pdfRows,{kind="pdf-page",start={page=2,offset=pdfOffset},end={page=2,offset=pdfOffset+len(pdfQuote)-1},quote=pdfQuote},"página 2 · offset #pdfOffset#"));
+
+paragraphs=extractor.docxParagraphs(root & "locations.docx");
+if(paragraphs.len()<3) throw(message="DOCX has fewer than three readable paragraphs");
+paragraphKeys=[];for(index=1;index<=paragraphs.len();index++)paragraphKeys.append("paragraph#index#");
+docxRows=rows(paragraphKeys,paragraphs); docxQuote=paragraphs[2]; docxOffset=find(docxQuote,paragraphs[2]);
+documents.append(record("locations.docx","DOCX",paragraphs.toList(char(10)),docxRows,{kind="docx-paragraph",start={paragraph=2,offset=docxOffset},end={paragraph=2,offset=docxOffset+len(docxQuote)-1},quote=docxQuote},"párrafo 2 · offset #docxOffset#"));
+
+cells=extractor.xlsxCells(root & "locations.xlsx","Limits"); xlsxRows=[];xlsxContent=[];xlsxQuote="";
+for(cell in cells){xlsxRows.append({key="Limits!#cell.cell#",text=cell.value});xlsxContent.append("Limits!#cell.cell# = #cell.value#");if(cell.cell=="B2")xlsxQuote=cell.value;}
+if(!len(xlsxQuote))throw(message="XLSX has no Limits!B2");
+documents.append(record("locations.xlsx","XLSX",xlsxContent.toList(char(10)),xlsxRows,{kind="xlsx-cell",start={sheet="Limits",cell="B2",offset=1},end={sheet="Limits",cell="B2",offset=len(xlsxQuote)},quote=xlsxQuote},"hoja Limits · celda B2 · offset 1"));
+
+println(jsonSerialize({version=1,extractor="bx-ai loaders + bounded PDFBox/OOXML EvidenceExtractor",documents=documents}));

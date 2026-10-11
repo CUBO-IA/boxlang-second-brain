@@ -1,4 +1,7 @@
 {
+    "classPaths": [
+        "/modules/second-brain/backend"
+    ],
     "modulesDirectory": [
         "${boxlang-home}/modules",
         "/modules"
