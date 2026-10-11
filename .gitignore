@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+.boxlang/
+boxlang_modules/
+modules/
+logs/

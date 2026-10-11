@@ -1,0 +1,17 @@
+{
+    "modulesDirectory": [
+        "${boxlang-home}/modules",
+        "/modules"
+    ],
+    "defaultDatasource": "secondBrain",
+    "datasources": {
+        "secondBrain": {
+            "driver": "postgresql",
+            "host": "${env.POSTGRES_HOST:postgres}",
+            "port": 5432,
+            "database": "${env.POSTGRES_DB}",
+            "username": "${env.POSTGRES_USER}",
+            "password": "${env.POSTGRES_PASSWORD}"
+        }
+    }
+}

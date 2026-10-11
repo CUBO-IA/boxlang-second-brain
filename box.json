@@ -1,0 +1,17 @@
+{
+    "name": "Second Brain",
+    "version": "0.1.0",
+    "author": "Out of the Box",
+    "slug": "bx-second-brain",
+    "shortDescription": "Base de conocimiento con respuestas respaldadas por evidencia.",
+    "type": "boxlang-modules",
+    "private": true,
+    "boxlang": {
+        "minimumVersion": "1.18.0",
+        "moduleName": "secondBrain"
+    },
+    "dependencies": {
+        "bx-ai": "3.5.0",
+        "bx-postgresql": "1.2.0"
+    }
+}

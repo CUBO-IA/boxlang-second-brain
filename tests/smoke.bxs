@@ -1,0 +1,17 @@
+import ortus.boxlang.runtime.BoxRuntime;
+import ortus.boxlang.runtime.scopes.Key;
+
+// Solo verifica infraestructura; no crea tablas ni llama a proveedores de IA.
+moduleService = BoxRuntime.getInstance().getModuleService();
+for ( name in [ "secondBrain", "bxai", "postgresql" ] ) {
+    if ( !moduleService.hasModule( Key.of( name ) ) || !moduleService.getModuleRecord( Key.of( name ) ).isActivated() ) {
+        throw( message = "El módulo #name# no está activo." );
+    }
+}
+
+extension = queryExecute( "SELECT extversion FROM pg_extension WHERE extname = 'vector'" );
+distance = queryExecute( "SELECT '[1,2,3]'::vector <-> '[1,2,3]'::vector AS distance" );
+if ( extension.recordCount != 1 || distance.distance[ 1 ] != 0 ) {
+    throw( message = "La verificación de pgvector falló." );
+}
+println( "OK: Second Brain, BoxLang AI, PostgreSQL y pgvector disponibles." );

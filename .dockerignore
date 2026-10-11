@@ -1,0 +1,7 @@
+.git
+.env
+.env.*
+.boxlang
+boxlang_modules
+modules
+logs
