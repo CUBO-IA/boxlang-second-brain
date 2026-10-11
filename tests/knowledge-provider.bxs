@@ -1,0 +1,127 @@
+// Role B — authorized real OpenAI path for ingest/retrieve/answer (03.x).
+// Opt-in only. Does not print secrets. Uses BudgetGatedCaller + SQL retrieval (not bx-ai findSimilar).
+import secondBrain.KnowledgeCore;
+import secondBrain.OpenAIProvider;
+
+env = server.system.environment;
+function record(required struct event) {
+	var line = jsonSerialize(arguments.event);
+	var path = env.P00_PROVIDER_RECORD_PATH ?: "/tmp/second-brain-knowledge-provider.ndjson";
+	fileAppend(path, line & char(10), "utf-8");
+	println(line);
+}
+function safeError(required any failure, required string apiKey) {
+	var message = arguments.failure.message ?: "provider knowledge run failed";
+	return len(arguments.apiKey) ? replace(toString(message), arguments.apiKey, "[REDACTED]", "all") : toString(message);
+}
+function blocked(required string reason) {
+	record({ status: "BLOCKED", passed: false, reason: arguments.reason, requestsMade: 0 });
+}
+
+if ( (env.P00_ALLOW_PROVIDER_CALLS ?: "") != "YES" ) { blocked("P00_ALLOW_PROVIDER_CALLS must equal YES"); abort; }
+key = env.OPENAI_API_KEY ?: "";
+if ( !len(key) ) { blocked("OPENAI_API_KEY absent"); abort; }
+if ( !reFind("^20[0-9]{2}-[0-9]{2}-[0-9]{2}$", env.P00_PRICE_DATE ?: "") || !len(env.P00_PRICE_REFERENCE ?: "") ) {
+	blocked("Require dated P00_PRICE_DATE and P00_PRICE_REFERENCE");
+	abort;
+}
+
+provider = new OpenAIProvider(key, 30);
+core = new KnowledgeCore(provider);
+
+day = core.getBudget().snapshot().dayUtc;
+queryExecute("DELETE FROM budget_reservations WHERE day_utc = CAST(? AS DATE)", [ day ]);
+queryExecute(
+	"INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), CAST(? AS NUMERIC)) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = EXCLUDED.limit_usd",
+	[ day, val(env.BUDGET_DAILY_USD ?: 20) ]
+);
+queryExecute("DELETE FROM knowledge_fragments WHERE space_id = ?", [ "space-provider-b" ]);
+queryExecute("DELETE FROM knowledge_documents WHERE space_id = ?", [ "space-provider-b" ]);
+
+space = "space-provider-b";
+docA = "prov-req";
+docB = "prov-approver";
+textA = "Para solicitar la aprobacion, envia el formulario al area legal. Incluye el identificador del expediente.";
+textB = "La aprobacion la concede la directora de cumplimiento. No se autoaprueba.";
+
+try {
+	ingestA = core.ingestText(space, docA, "r1", "requisitos.txt", textA);
+	ingestB = core.ingestText(space, docB, "r1", "aprobacion.txt", textB);
+	if ( !ingestA.ok || !ingestB.ok ) {
+		record({
+			status: "ERROR",
+			passed: false,
+			operation: "ingest",
+			ingestA: ingestA,
+			ingestB: ingestB,
+			embedCalls: provider.getEmbedCalls(),
+			chatCalls: provider.getChatCalls()
+		});
+		abort;
+	}
+
+	answer = core.ask(space, [ docA, docB ], "Como solicito la aprobacion y quien la concede?");
+	selection = core.ask(space, [ docA ], "Quien concede la aprobacion?");
+	absent = core.ask(space, [ docA, docB ], "Cual es el color exacto del logo corporativo inexistente?");
+
+	labels = [];
+	if ( structKeyExists(answer, "claims") ) {
+		for ( i = 1; i <= answer.claims.len(); i++ ) labels.append(answer.claims[i].label);
+	}
+	selectionDocs = [];
+	if ( structKeyExists(selection, "citations") ) {
+		for ( j = 1; j <= selection.citations.len(); j++ ) selectionDocs.append(selection.citations[j].documentId);
+	}
+	selectionLeak = false;
+	for ( d = 1; d <= selectionDocs.len(); d++ ) {
+		if ( selectionDocs[d] != docA ) selectionLeak = true;
+	}
+
+	passed = answer.ok && !(answer.abstained ?: false) && (structKeyExists(answer, "citations") && answer.citations.len() >= 1)
+		&& selection.ok && !selectionLeak
+		&& absent.ok && (absent.abstained ?: false);
+
+	record({
+		status: passed ? "PASS" : "FAIL",
+		passed: passed,
+		operation: "knowledge-core-real-ai",
+		providerRequests: {
+			embedCalls: provider.getEmbedCalls(),
+			chatCalls: provider.getChatCalls()
+		},
+		answer: {
+			ok: answer.ok,
+			abstained: answer.abstained ?: false,
+			claimCount: structKeyExists(answer, "claims") ? answer.claims.len() : 0,
+			citationCount: structKeyExists(answer, "citations") ? answer.citations.len() : 0,
+			usageUSD: answer.usageUSD ?: 0,
+			labels: labels
+		},
+		selection: {
+			ok: selection.ok,
+			abstained: selection.abstained ?: false,
+			citationDocs: selectionDocs,
+			leak: selectionLeak
+		},
+		absent: {
+			ok: absent.ok,
+			abstained: absent.abstained ?: false,
+			reason: absent.reason ?: ""
+		},
+		budget: core.getBudget().snapshot(),
+		models: { chat: "gpt-6-luna", embed: "text-embedding-3-small" },
+		recordedAt: now()
+	});
+	if ( !passed ) abort;
+	println("OK: Role B real OpenAI ingest/retrieve/answer checks passed.");
+} catch ( any failure ) {
+	record({
+		status: "ERROR",
+		passed: false,
+		operation: "knowledge-core-real-ai",
+		error: safeError(failure, key),
+		embedCalls: provider.getEmbedCalls(),
+		chatCalls: provider.getChatCalls()
+	});
+	abort;
+}
