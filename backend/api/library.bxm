@@ -1,0 +1,83 @@
+<bx:script>
+    data = getHTTPRequestData(false);
+    headers = data.headers;
+    sessionToken = "";
+    cookieHeader = structKeyExists(headers, "Cookie") ? toString(headers.Cookie) : "";
+    if ( len(cookieHeader) <= 4096 ) {
+        for ( pair in listToArray(cookieHeader, ";") ) {
+            at = find("=", pair);
+            if ( at > 1 && lCase(trim(left(pair, at - 1))) == "sb_session" ) {
+                if ( len(sessionToken) ) { sessionToken = ""; break; }
+                sessionToken = trim(mid(pair, at + 1, len(pair)));
+            }
+        }
+    }
+    input = {
+        method: uCase(data.method), body: {}, sessionToken: sessionToken,
+        origin: structKeyExists(headers, "Origin") ? toString(headers.Origin) : "",
+        csrfToken: structKeyExists(headers, "X-CSRF-Token") ? toString(headers["X-CSRF-Token"]) : "",
+        spaceId: structKeyExists(url, "spaceId") ? toString(url.spaceId) : "",
+        documentId: structKeyExists(url, "documentId") ? toString(url.documentId) : "",
+        taskId: structKeyExists(url, "taskId") ? toString(url.taskId) : ""
+    };
+    operation = structKeyExists(url, "op") ? toString(url.op) : "";
+    library = new secondBrain.LibraryService();
+    if ( operation == "upload" ) {
+        try {
+            if ( input.method != "POST" ) throw(type="SecondBrain.Library", message="method", errorCode="405");
+            library.authorizeUpload(input);
+            count = structKeyExists(form, "count") ? toString(form.count) : "";
+            if ( reFind("^([1-9]|1[0-9]|20)$", count) != 1 || (len(input.documentId) && count != "1") ) throw(type="SecondBrain.Library", message="batch_limit", errorCode="400");
+            allowedFields = {count: true, fieldnames: true};
+            for ( index = 1; index <= toNumeric(count); index++ ) {
+                for ( prefix in ["file", "name", "key"] ) allowedFields[prefix & index] = true;
+            }
+            for ( field in structKeyArray(form) ) {
+                if ( !structKeyExists(allowedFields, field) ) throw(type="SecondBrain.Library", message="batch_limit", errorCode="400");
+            }
+            parts = getPageContext().getExchange().getUploadData();
+            if ( isNull(parts) || arrayLen(parts) != toNumeric(count) ) throw(type="SecondBrain.Library", message="batch_limit", errorCode="400");
+            seenFiles = {};
+            for ( part in parts ) {
+                field = part.formFieldName().getName();
+                if ( !structKeyExists(allowedFields, field) || left(lCase(field), 4) != "file" || structKeyExists(seenFiles, field) ) throw(type="SecondBrain.Library", message="batch_limit", errorCode="400");
+                seenFiles[field] = true;
+            }
+            results = [];
+            for ( index = 1; index <= toNumeric(count); index++ ) {
+                directory = library.uploadDirectory();
+                try {
+                    if ( !structKeyExists(form, "file" & index) || !structKeyExists(form, "name" & index) || !structKeyExists(form, "key" & index) ) throw(type="SecondBrain.Library", message="invalid_input", errorCode="400");
+                    // A full generated target overrides the multipart filename, even before validation.
+                    uploaded = fileUpload(destination=directory & "/received.bin", filefield="file" & index, strict=false);
+                    if ( !uploaded.fileWasSaved ) throw(type="SecondBrain.Library", message="unsupported_format", errorCode="415");
+                    if ( uploaded.serverFile != "received.bin" ) throw(type="SecondBrain.Library", message="storage", errorCode="500");
+                    accepted = library.acceptFile(input, directory & "/received.bin", form["name" & index], form["key" & index], input.documentId);
+                    results.append({index: index, status: accepted.replay ? 200 : 202, document: accepted});
+                } catch (any fileFailure) {
+                    failed = library.safeError(fileFailure);
+                    results.append({index: index, status: failed.status, error: failed.body});
+                } finally { directoryDelete(directory, true); }
+            }
+            response = {status: 200, body: {results: results}};
+        } catch (any uploadFailure) { response = library.safeError(uploadFailure); }
+    } else { response = library.handle(operation, input); }
+
+    bx:header statusCode=response.status;
+    bx:header name="Cache-Control" value="no-store";
+    bx:header name="X-Content-Type-Options" value="nosniff";
+    if ( structKeyExists(response, "download") ) {
+        // Always download inert bytes; active source/HTML can never run in this origin.
+        bx:header name="Content-Disposition" value="attachment; filename=document.bin";
+        bx:header name="Content-Security-Policy" value="sandbox; default-src 'none'";
+        try { bx:content type="application/octet-stream" file=response.download.file deleteFile=false; }
+        catch (any unavailableOriginal) {
+            bx:header statusCode=503;
+            bx:content type="application/json; charset=utf-8" reset=true;
+            writeOutput(jsonSerialize({errorCategory: "storage", message: "El original no está disponible."}));
+        }
+    } else {
+        bx:content type="application/json; charset=utf-8";
+        writeOutput(jsonSerialize(response.body));
+    }
+</bx:script>

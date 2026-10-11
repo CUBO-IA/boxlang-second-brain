@@ -1,0 +1,158 @@
+// P02.1–P02.5 / V03,V05–V08,V16,V18. Synthetic files/DB only; never calls AI.
+function verify(required boolean condition, required string message) { if (!arguments.condition) throw(message=arguments.message); }
+function denied(required any action, required numeric status) {
+    var caught = false;
+    try { arguments.action(); } catch (any error) { caught = error.type == "SecondBrain.Library" && toNumeric(error.errorCode) == arguments.status; }
+    verify(caught, "Expected library rejection #arguments.status#");
+}
+run = getSystemSetting("P02_RUN", "");
+verify(reFind("^[a-z0-9-]{1,40}$", run) == 1, "P02_RUN must be a unique synthetic slug");
+email = "p02-#run#-core@example.invalid";
+accounts = new secondBrain.AccountService();
+input = {method: "POST", body: {email: email, password: "phase02-synthetic-password"}, origin: getSystemSetting("APP_ORIGIN"), csrfToken: "", sessionToken: "", spaceId: ""};
+verify(accounts.handle("register", input).status == 202, "Register");
+login = accounts.handle("login", input);
+verify(login.status == 200, "Login");
+input.sessionToken = listFirst(listLast(listFirst(login.setCookie, ";"), "="), ";");
+input.csrfToken = login.body.csrfToken;
+input.body = {name: "P02 core " & run};
+space = accounts.handle("createSpace", input);
+verify(space.status == 201, "Space");
+input.spaceId = toString(space.body.space.id);
+cleaningFails = false;
+library = new secondBrain.LibraryService((document, version) => { if (cleaningFails) throw(message="synthetic cleanup failure"); });
+temp = library.uploadDirectory();
+file = temp & "/data.txt";
+function writeSynthetic(required string content) { fileWrite(file, arguments.content, "UTF-8"); }
+try {
+    writeSynthetic("P02 original " & run);
+    first = library.acceptFile(input, file, "original.txt", "first");
+    verify(first.status == "pending", "Saved is not available");
+    replay = library.acceptFile(input, file, "original.txt", "first");
+    verify(replay.replay && replay.documentId == first.documentId && replay.taskId == first.taskId, "Replay keeps identity/task");
+    denied(() => library.acceptFile(input, file, "original.txt", "duplicate"), 409);
+    denied(() => library.acceptFile(input, file, "../escape.bxs", "evil"), 400);
+    denied(() => library.acceptFile(input, file, "original.exe", "unsupported"), 415);
+    denied(() => library.acceptFile(input, file, "wrong.pdf", "mismatch"), 415);
+    fileWrite(file, binaryDecode("fffe00", "hex"));
+    denied(() => library.acceptFile(input, file, "binary.txt", "binary"), 415);
+    writeSynthetic("changed " & run);
+    denied(() => library.acceptFile(input, file, "original.txt", "first"), 409);
+
+    // Simulate crash after DB commit before rename; reconcile stored staging.
+    original = library.getOriginal(input, first.documentId).file;
+    staged = "/data/second-brain/staging/" & first.versionId & ".part";
+    fileMove(original, staged);
+    queryExecute("UPDATE document_versions SET storage_state = 'stored' WHERE id = CAST(? AS UUID)", [first.versionId]);
+    library.recover();
+    verify(fileExists(original) && !fileExists(staged), "Reconcile committed staging");
+    // Missing committed original fails safely; same-key upload repairs, not a new doc.
+    fileDelete(original);
+    queryExecute("UPDATE document_versions SET storage_state = 'stored' WHERE id = CAST(? AS UUID)", [first.versionId]);
+    library.recover();
+    verify(library.getTask(input, first.taskId).state == "failed", "Missing original fails");
+    writeSynthetic("P02 original " & run);
+    repaired = library.acceptFile(input, file, "original.txt", "first");
+    verify(repaired.replay && fileExists(original), "Same-key repair of storage failure");
+    verify(repaired.status == "pending", "Repaired task must be pending, got " & repaired.status & "/" & repaired.errorCategory);
+    task = library.claimTask(first.taskId);
+    verify(!structIsEmpty(task), "Expected repaired task to be claimable");
+    verify(task.id == first.taskId && library.heartbeat(task.id, task.leaseToken), "Claim and heartbeat");
+    verify(structIsEmpty(library.claimTask(first.taskId)), "No double claim");
+    queryExecute("UPDATE document_tasks SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = CAST(? AS UUID)", [task.id]);
+    library.recover();
+    verify(!library.heartbeat(task.id, task.leaseToken), "Expired lease cannot heartbeat");
+    called = false;
+    verify(!library.publishTask(task.id, task.leaseToken, (document, version, previous) => {called = true;}), "Expired worker cannot publish");
+    verify(!called, "Stale commit not invoked");
+    queryExecute("UPDATE document_tasks SET next_attempt_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [task.id]);
+    task = library.claimTask(first.taskId);
+    verify(task.attempts == 2, "Attempt persisted after recovery");
+    rolledBack = false;
+    try {
+        library.publishTask(task.id, task.leaseToken, (document, version, previous) => {
+            queryExecute("UPDATE document_versions SET name = 'must-rollback.txt' WHERE id = CAST(? AS UUID)", [version]);
+            throw(message="synthetic incomplete pipeline");
+        });
+    } catch (any incomplete) { rolledBack = true; }
+    verify(rolledBack && library.listDocuments(input)[1].name == "original.txt" && library.listDocuments(input)[1].status != "available", "Failed result callback rolls back all publication");
+    // Synthetic commit checks ONLY fencing/records, not real indexing or AI.
+    verify(library.publishTask(task.id, task.leaseToken, (document, version, previous) => {verify(version == first.versionId, "Expected revision");}), "Current task publishes synthetic record");
+    verify(library.listDocuments(input)[1].status == "available", "Only explicit commit publishes");
+
+    writeSynthetic("replacement " & run);
+    replacement = library.acceptFile(input, file, "replacement.txt", "replacement", first.documentId);
+    replacementTask = library.claimTask(replacement.taskId);
+    library.failTask(replacementTask.id, replacementTask.leaseToken, "extraction", false);
+    verify(library.listDocuments(input)[1].version == first.versionId && fileExists(original), "Failed replacement preserves valid original");
+    library.retryTask(input, replacement.taskId);
+    oldWorker = library.claimTask(replacement.taskId);
+    writeSynthetic("new candidate " & run);
+    newest = library.acceptFile(input, file, "newest.txt", "newest", first.documentId);
+    verify(!library.publishTask(oldWorker.id, oldWorker.leaseToken, (document, version, previous) => {throw(message="Stale callback executed");}), "Replacement fences old worker");
+    newestTask = library.claimTask(newest.taskId);
+    verify(library.publishTask(newestTask.id, newestTask.leaseToken, (document, version, previous) => {verify(previous == first.versionId, "Previous valid revision");}), "Replacement publishes expected revision");
+    verify(!fileExists(original), "Old original cleaned after publication");
+    writeSynthetic("candidate during delete " & run);
+    deleting = library.acceptFile(input, file, "deleting.txt", "deleting", first.documentId);
+    late = library.claimTask(deleting.taskId);
+    cleaningFails = true;
+    verify(library.deleteDocument(input, first.documentId).status == "deleting", "Partial cleanup is not success");
+    denied(() => library.getOriginal(input, first.documentId), 404);
+    verify(arrayLen(library.listDocuments(input)) == 0, "Tombstone hidden immediately");
+    verify(!library.publishTask(late.id, late.leaseToken, (document, version, previous) => {throw(message="Deleted task committed");}), "Deleted task cannot resurrect");
+    cleaningFails = false;
+    library.recover();
+    verify(library.deleteDocument(input, first.documentId).status == "deleted", "Cleanup restart and repeated delete idempotent");
+    denied(() => library.acceptFile(input, file, "deleting.txt", "deleting", first.documentId), 410);
+    verify(!fileExists(late.original), "Deleted candidate original removed");
+
+    writeSynthetic("bounded retries " & run);
+    retries = library.acceptFile(input, file, "retries.txt", "retries");
+    for (attempt = 1; attempt <= 3; attempt++) {
+        retryWorker = library.claimTask(retries.taskId);
+        verify(retryWorker.attempts == attempt, "Retry count persisted");
+        library.failTask(retryWorker.id, retryWorker.leaseToken, "provider");
+        queryExecute("UPDATE document_tasks SET next_attempt_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [retryWorker.id]);
+    }
+    verify(library.getTask(input, retries.taskId).state == "failed" && structIsEmpty(library.claimTask(retries.taskId)), "Stop after three automatic attempts");
+    library.retryTask(input, retries.taskId);
+    verify(library.getTask(input, retries.taskId).attempts == 0, "Explicit retry reopens a failed current task");
+    library.deleteDocument(input, retries.documentId);
+
+    // P02.2 exact decimal-byte boundary, with a sparse synthetic local file.
+    large = temp & "/large.pdf";
+    fileWrite(large, "%PDF-1.7");
+    randomFile = createObject("java", "java.io.RandomAccessFile").init(large, "rw");
+    randomFile.setLength(50000001); randomFile.close();
+    denied(() => library.acceptFile(input, large, "large.pdf", "too-large"), 413);
+    randomFile = createObject("java", "java.io.RandomAccessFile").init(large, "rw");
+    randomFile.setLength(50000000); randomFile.close();
+    boundary = library.acceptFile(input, large, "large.pdf", "boundary");
+    verify(library.getOriginal(input, boundary.documentId).mediaType == "application/pdf", "50,000,000-byte boundary accepted for storage, not certified extraction");
+    library.deleteDocument(input, boundary.documentId);
+    orphanId = lCase(createObject("java", "java.util.UUID").randomUUID().toString());
+    orphan = "/data/second-brain/staging/" & orphanId & ".part";
+    fileWrite(orphan, "synthetic uncommitted orphan");
+    oldTime = createObject("java", "java.lang.System").currentTimeMillis() - 90000000;
+    createObject("java", "java.io.File").init(orphan).setLastModified(oldTime);
+    orphanUpload = library.uploadDirectory();
+    fileWrite(orphanUpload & "/orphan.txt", "synthetic interrupted upload");
+    createObject("java", "java.io.File").init(orphanUpload).setLastModified(oldTime);
+    library.recover();
+    verify(!fileExists(orphan) && !directoryExists(orphanUpload), "Unreferenced staging/upload temporaries older than 24 h removed");
+    println("OK P02.1–P02.5 / V03,V05–V08,V16,V18: private files, replay/duplicate, recovery, leases, synthetic publication fence, replacement, partial delete, size boundary. No AI/indexing certified.");
+} finally {
+    // Only this run's synthetic space; do not delete unrelated records/files.
+    cleaningFails = false;
+    docs = queryExecute("SELECT id FROM documents WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+    for (doc in docs) library.deleteDocument(input, doc.id);
+    queryExecute("UPDATE documents SET current_version = NULL, candidate_version = NULL WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+    queryExecute("DELETE FROM document_tasks WHERE document_id IN (SELECT id FROM documents WHERE space_id = CAST(? AS BIGINT))", [input.spaceId]);
+    queryExecute("DELETE FROM document_versions WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+    queryExecute("DELETE FROM documents WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+    queryExecute("DELETE FROM spaces WHERE id = CAST(? AS BIGINT)", [input.spaceId]);
+    queryExecute("DELETE FROM accounts WHERE email = ?", [email]);
+    queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [lCase(hash(email, "SHA-256"))]);
+    directoryDelete(temp, true);
+}

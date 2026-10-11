@@ -1,0 +1,329 @@
+import java:java.nio.file.Files;
+import java:java.nio.file.StandardCopyOption;
+import java:java.security.MessageDigest;
+
+/** Private originals and durable tasks. No AI calls, HTTP state or public file paths. */
+class {
+	function init(any removeDerived) {
+		variables.accounts = new secondBrain.AccountService();
+		variables.cleanupCallback = false;
+		if ( !isNull(arguments.removeDerived) ) variables.cleanupCallback = arguments.removeDerived;
+		for ( var directory in [root(), root() & "/staging", root() & "/originals", root() & "/uploads"] ) {
+			if ( !directoryExists(directory) ) directoryCreate(directory, true, true);
+		}
+		return this;
+	}
+
+	private string function root() { return "/data/second-brain"; }
+	private string function uuid() { return lCase(createObject("java", "java.util.UUID").randomUUID().toString()); }
+	private boolean function validId(required any id) { return isInstanceOf(arguments.id, "java.lang.String") && reFind("^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$", arguments.id) == 1; }
+	private any function path(required string file) { return createObject("java", "java.io.File").init(arguments.file).toPath(); }
+	private string function original(required string version) { if ( !validId(arguments.version) ) reject(400, "invalid_input"); return root() & "/originals/" & arguments.version & ".bin"; }
+	private string function staging(required string version) { if ( !validId(arguments.version) ) reject(400, "invalid_input"); return root() & "/staging/" & arguments.version & ".part"; }
+
+	private function reject(required numeric status, required string category) { throw(type="SecondBrain.Library", message=arguments.category, errorCode=toString(arguments.status)); }
+
+	private struct function access(required struct request, boolean write=false, boolean lockSpace=false) {
+		if ( arguments.write ) {
+			var mutation = variables.accounts.requireMutation(arguments.request);
+			if ( !mutation.allowed ) reject(mutation.failure.status, "permission");
+		}
+		var gate = variables.accounts.authorize(arguments.request.sessionToken, arguments.request.spaceId, arguments.write ? "write_document" : "read", arguments.lockSpace);
+		if ( !gate.allowed ) reject(gate.sessionValid ? 403 : 401, "permission");
+		return gate;
+	}
+
+	/** Authorize before multipart files are copied. Writes are reauthorized under the space lock. */
+	struct function authorizeUpload(required struct request) { return access(arguments.request, true); }
+	string function uploadDirectory() { var directory = root() & "/uploads/" & uuid(); directoryCreate(directory); return directory; }
+
+	private string function digest(required string file) {
+		var digest = MessageDigest.getInstance("SHA-256");
+		var stream = createObject("java", "java.security.DigestInputStream").init(Files.newInputStream(path(arguments.file)), digest);
+		try { stream.transferTo(createObject("java", "java.io.OutputStream").nullOutputStream()); }
+		finally { stream.close(); }
+		return lCase(binaryEncode(digest.digest(), "hex"));
+	}
+
+	private struct function validateFile(required string file, required any name) {
+		if ( !isInstanceOf(arguments.name, "java.lang.String") || !len(trim(arguments.name)) || len(arguments.name) > 255 || reFind('[\\/\x00-\x1f\x7f]', arguments.name) || arguments.name == "." || arguments.name == ".." ) reject(400, "invalid_name");
+		var size = Files.size(path(arguments.file));
+		if ( size < 1 || size > 50000000 ) reject(413, "file_size");
+		var extension = lCase(listLast(arguments.name, "."));
+		var types = { txt: "text/plain", md: "text/markdown", json: "application/json", csv: "text/csv", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+		var code = "bx,bxs,bxm,cfc,cfm,js,mjs,cjs,jsx,ts,tsx,py,java,sql,yaml,yml,toml";
+		if ( !structKeyExists(types, extension) && !listFind(code, extension) ) reject(415, "unsupported_format");
+		var stream = Files.newInputStream(path(arguments.file));
+		try { var header = binaryEncode(stream.readNBytes(8), "hex"); } finally { stream.close(); }
+		if ( extension == "pdf" ) {
+			if ( left(lCase(header), 10) != "255044462d" ) reject(415, "type_mismatch");
+		} else if ( listFind("docx,xlsx", extension) ) {
+			if ( left(lCase(header), 8) != "504b0304" ) reject(415, "type_mismatch");
+		} else {
+			// Decode strictly, never replace invalid UTF-8 bytes or execute imported source.
+			var decoder = createObject("java", "java.nio.charset.StandardCharsets").UTF_8.newDecoder();
+			try { var text = decoder.decode(createObject("java", "java.nio.ByteBuffer").wrap(fileReadBinary(arguments.file))).toString(); }
+			catch (any invalidText) { reject(415, "type_mismatch"); }
+			if ( reFind('[\x00-\x08\x0b\x0c\x0e-\x1f]', text) ) reject(415, "type_mismatch");
+			if ( extension == "json" ) { try { jsonDeserialize(text); } catch (any invalidJson) { reject(415, "invalid_content"); } }
+		}
+		return { size: size, mediaType: structKeyExists(types, extension) ? types[extension] : "text/plain", hash: digest(arguments.file) };
+	}
+
+	/** request carries session/origin/CSRF; file is a trusted local upload, never a client path. */
+	struct function acceptFile(required struct request, required string file, required any name, required any operationKey, string documentId="") {
+		access(arguments.request, true);
+		if ( !isInstanceOf(arguments.operationKey, "java.lang.String") || reFind("^[A-Za-z0-9_-]{1,100}$", arguments.operationKey) != 1 || (len(arguments.documentId) && !validId(arguments.documentId)) ) reject(400, "invalid_input");
+		var info = validateFile(arguments.file, arguments.name);
+		var signature = lCase(hash(jsonSerialize([arguments.name, info.hash, arguments.documentId]), "SHA-256"));
+		var version = uuid();
+		var document = len(arguments.documentId) ? arguments.documentId : uuid();
+		var task = uuid();
+		var replay = false;
+		try {
+			transaction {
+				// ponytail: writes serialize per space (including a <=50 MB copy); move staging before the lock if measured throughput requires it.
+				var gate = access(arguments.request, true, true);
+				var previous = queryExecute("SELECT v.id, v.document_id, v.request_hash, v.storage_state, d.candidate_version, d.deleted_at FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE v.space_id = CAST(? AS BIGINT) AND v.author_id = CAST(? AS BIGINT) AND v.operation_key = ?", [toString(arguments.request.spaceId), toString(gate.userId), arguments.operationKey]);
+				if ( previous.recordCount ) {
+					if ( previous.request_hash[1] != signature ) reject(409, "operation_conflict");
+					if ( !isNull(previous.deleted_at[1]) ) reject(410, "deleted_source");
+					version = previous.id[1]; document = previous.document_id[1]; replay = true;
+					if ( previous.storage_state[1] == "failed" && previous.candidate_version[1] == version ) {
+						removeFiles(version);
+						Files.copy(path(arguments.file), path(staging(version)));
+						queryExecute("UPDATE document_versions SET storage_state = 'stored' WHERE id = CAST(? AS UUID)", [version]);
+						queryExecute("UPDATE document_tasks SET state = 'pending', attempts = 0, error_category = NULL, next_attempt_at = CURRENT_TIMESTAMP WHERE version_id = CAST(? AS UUID)", [version]);
+					}
+				} else {
+					if ( len(arguments.documentId) ) {
+						var target = queryExecute("SELECT id FROM documents WHERE id = CAST(? AS UUID) AND space_id = CAST(? AS BIGINT) AND deleted_at IS NULL FOR UPDATE", [document, toString(arguments.request.spaceId)]);
+						if ( target.recordCount != 1 ) reject(404, "not_found");
+					} else {
+						var count = queryExecute("SELECT COUNT(*) AS total FROM documents WHERE space_id = CAST(? AS BIGINT) AND (deleted_at IS NULL OR cleanup_pending)", [toString(arguments.request.spaceId)]);
+						if ( count.total[1] >= 1000 ) reject(409, "document_quota");
+					}
+					var duplicate = queryExecute("SELECT v.document_id FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE v.space_id = CAST(? AS BIGINT) AND v.sha256 = ? AND d.deleted_at IS NULL AND (v.id = d.current_version OR v.id = d.candidate_version)", [toString(arguments.request.spaceId), info.hash]);
+					if ( duplicate.recordCount ) reject(409, "duplicate");
+					// Any pre-commit crash leaves only a UUID temporary, collected after 24 h.
+					Files.copy(path(arguments.file), path(staging(version)));
+					if ( !len(arguments.documentId) ) queryExecute("INSERT INTO documents (id, space_id) VALUES (CAST(? AS UUID), CAST(? AS BIGINT))", [document, toString(arguments.request.spaceId)]);
+					queryExecute("INSERT INTO document_versions (id, document_id, space_id, author_id, operation_key, request_hash, name, media_type, provenance, byte_size, sha256, storage_state) VALUES (CAST(? AS UUID), CAST(? AS UUID), CAST(? AS BIGINT), CAST(? AS BIGINT), ?, ?, ?, ?, CAST(? AS JSONB), CAST(? AS BIGINT), ?, 'stored')", [version, document, toString(arguments.request.spaceId), toString(gate.userId), arguments.operationKey, signature, arguments.name, info.mediaType, jsonSerialize({kind: "upload"}), toString(info.size), info.hash]);
+					queryExecute("UPDATE document_tasks SET state = 'cancelled', lease_token = NULL, lease_until = NULL WHERE document_id = CAST(? AS UUID) AND state IN ('pending', 'processing', 'failed')", [document]);
+					queryExecute("UPDATE documents SET candidate_version = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", [version, document]);
+					queryExecute("INSERT INTO document_tasks (id, document_id, version_id) VALUES (CAST(? AS UUID), CAST(? AS UUID), CAST(? AS UUID))", [task, document, version]);
+				}
+			}
+		} catch (any failure) {
+			if ( !replay && fileExists(staging(version)) ) fileDelete(staging(version));
+			rethrow;
+		}
+		promote(version);
+		if ( len(arguments.documentId) ) cleanupSuperseded();
+		var persistedTask = queryExecute("SELECT id, state, COALESCE(error_category, '') AS error_category FROM document_tasks WHERE version_id = CAST(? AS UUID)", [version]);
+		return { documentId: document, versionId: version, taskId: persistedTask.id[1], replay: replay, status: persistedTask.state[1], errorCategory: persistedTask.error_category[1] };
+	}
+
+	/** Durable stored -> ready means original ready, NOT knowledge available. */
+	private function promote(required string version) {
+		transaction {
+			var found = queryExecute("SELECT v.sha256, v.storage_state FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE v.id = CAST(? AS UUID) AND d.deleted_at IS NULL FOR UPDATE OF d, v", [arguments.version]);
+			if ( !found.recordCount || found.storage_state[1] != "stored" ) return;
+			try {
+				if ( !fileExists(original(arguments.version)) && fileExists(staging(arguments.version)) ) Files.move(path(staging(arguments.version)), path(original(arguments.version)), [StandardCopyOption.ATOMIC_MOVE]);
+				if ( !fileExists(original(arguments.version)) || digest(original(arguments.version)) != found.sha256[1] ) throw(message="Original missing or hash mismatch");
+				queryExecute("UPDATE document_versions SET storage_state = 'ready' WHERE id = CAST(? AS UUID)", [arguments.version]);
+			} catch (any storageFailure) {
+				queryExecute("UPDATE document_versions SET storage_state = 'failed' WHERE id = CAST(? AS UUID)", [arguments.version]);
+				queryExecute("UPDATE document_tasks SET state = 'failed', error_category = 'storage' WHERE version_id = CAST(? AS UUID) AND state != 'cancelled'", [arguments.version]);
+			}
+		}
+	}
+
+	private struct function documentValue(required struct row) {
+		return { id: row.id, spaceId: row.space_id, version: row.version_id, name: row.name, mediaType: row.media_type, size: row.byte_size, metadata: {provenance: jsonDeserialize(row.provenance)}, status: len(toString(row.current_version)) ? "available" : row.state, attempt: {taskId: row.task_id, version: row.candidate_version, status: row.state, errorCategory: isNull(row.error_category) ? "" : row.error_category} };
+	}
+
+	array function listDocuments(required struct request) {
+		access(arguments.request);
+		var found = queryExecute("SELECT d.id, d.space_id, COALESCE(d.current_version::TEXT, '') AS current_version, d.candidate_version, v.id AS version_id, v.name, v.media_type, v.byte_size, v.provenance::TEXT, t.id AS task_id, t.state, t.error_category FROM documents d JOIN document_versions v ON v.id = COALESCE(d.current_version, d.candidate_version) JOIN document_tasks t ON t.version_id = d.candidate_version WHERE d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL ORDER BY d.created_at, d.id", [toString(arguments.request.spaceId)]);
+		var documents = [];
+		for ( var row in found ) documents.append(documentValue(row));
+		return documents;
+	}
+
+	/** Internal response path is used only by the HTTP adapter, never serialized. */
+	struct function getOriginal(required struct request, required string documentId) {
+		access(arguments.request);
+		if ( !validId(arguments.documentId) ) reject(400, "invalid_input");
+		var found = queryExecute("SELECT v.id, v.name, v.media_type FROM documents d JOIN document_versions v ON v.id = COALESCE(d.current_version, d.candidate_version) WHERE d.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND v.storage_state = 'ready'", [arguments.documentId, toString(arguments.request.spaceId)]);
+		if ( found.recordCount != 1 ) reject(404, "not_found");
+		if ( !fileExists(original(found.id[1])) ) reject(503, "storage");
+		return { file: original(found.id[1]), name: found.name[1], mediaType: found.media_type[1] };
+	}
+
+	struct function getTask(required struct request, required string taskId) {
+		access(arguments.request);
+		if ( !validId(arguments.taskId) ) reject(400, "invalid_input");
+		var found = queryExecute("SELECT t.id, t.document_id, t.version_id, t.state, t.attempts, COALESCE(t.error_category, '') AS error_category FROM document_tasks t JOIN documents d ON d.id = t.document_id WHERE t.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT)", [arguments.taskId, toString(arguments.request.spaceId)]);
+		if ( !found.recordCount ) reject(404, "not_found");
+		return {id: found.id[1], documentId: found.document_id[1], versionId: found.version_id[1], state: found.state[1], attempts: found.attempts[1], errorCategory: found.error_category[1]};
+	}
+
+	function retryTask(required struct request, required string taskId) {
+		transaction {
+			access(arguments.request, true, true);
+			var task = getTask(arguments.request, arguments.taskId);
+			var eligible = queryExecute("SELECT t.id FROM document_tasks t JOIN documents d ON d.id = t.document_id JOIN document_versions v ON v.id = t.version_id WHERE t.id = CAST(? AS UUID) AND d.deleted_at IS NULL AND d.candidate_version = t.version_id AND v.storage_state = 'ready' AND t.state = 'failed' FOR UPDATE OF t", [arguments.taskId]);
+			if ( eligible.recordCount != 1 ) reject(409, "not_retryable");
+			queryExecute("UPDATE document_tasks SET state = 'pending', attempts = 0, error_category = NULL, next_attempt_at = CURRENT_TIMESTAMP, lease_token = NULL, lease_until = NULL WHERE id = CAST(? AS UUID)", [arguments.taskId]);
+		}
+	}
+
+	/** Trusted B worker only. SKIP LOCKED + fresh lease token fence every attempt. */
+	struct function claimTask(string taskId="") {
+		if ( len(arguments.taskId) && !validId(arguments.taskId) ) reject(400, "invalid_input");
+		recoverLeases();
+		var token = uuid();
+		var found;
+		transaction {
+			found = queryExecute("SELECT t.id, t.document_id, t.version_id, t.attempts FROM document_tasks t JOIN documents d ON d.id = t.document_id JOIN document_versions v ON v.id = t.version_id WHERE t.state = 'pending' AND t.next_attempt_at <= CURRENT_TIMESTAMP AND (? = '' OR t.id::TEXT = ?) AND d.deleted_at IS NULL AND d.candidate_version = t.version_id AND v.storage_state = 'ready' ORDER BY t.next_attempt_at, t.id FOR UPDATE OF t SKIP LOCKED LIMIT 1", [arguments.taskId, arguments.taskId]);
+			if ( !found.recordCount ) return {};
+			queryExecute("UPDATE document_tasks SET state = 'processing', attempts = attempts + 1, lease_token = CAST(? AS UUID), lease_until = CURRENT_TIMESTAMP + INTERVAL '60 seconds' WHERE id = CAST(? AS UUID)", [token, found.id[1]]);
+		}
+		var version = queryExecute("SELECT space_id, name, media_type, byte_size, sha256 FROM document_versions WHERE id = CAST(? AS UUID)", [found.version_id[1]]);
+		return {id: found.id[1], documentId: found.document_id[1], versionId: found.version_id[1], leaseToken: token, attempts: found.attempts[1] + 1, spaceId: version.space_id[1], original: original(found.version_id[1]), name: version.name[1], mediaType: version.media_type[1], size: version.byte_size[1], sha256: version.sha256[1]};
+	}
+
+	boolean function heartbeat(required string taskId, required string leaseToken) {
+		if ( !validId(arguments.taskId) || !validId(arguments.leaseToken) ) return false;
+		transaction {
+			queryExecute("UPDATE document_tasks t SET lease_until = CURRENT_TIMESTAMP + INTERVAL '60 seconds' FROM documents d WHERE t.id = CAST(? AS UUID) AND t.lease_token = CAST(? AS UUID) AND t.state = 'processing' AND t.lease_until > CURRENT_TIMESTAMP AND d.id = t.document_id AND d.deleted_at IS NULL AND d.candidate_version = t.version_id", [arguments.taskId, arguments.leaseToken]);
+			var renewed = queryExecute("SELECT t.id FROM document_tasks t JOIN documents d ON d.id = t.document_id WHERE t.id = CAST(? AS UUID) AND t.lease_token = CAST(? AS UUID) AND t.state = 'processing' AND t.lease_until > CURRENT_TIMESTAMP AND d.deleted_at IS NULL AND d.candidate_version = t.version_id", [arguments.taskId, arguments.leaseToken]);
+			return renewed.recordCount == 1;
+		}
+	}
+
+	function failTask(required string taskId, required string leaseToken, required string category, boolean retryable=true) {
+		if ( !validId(arguments.taskId) || !validId(arguments.leaseToken) || !listFind("storage,extraction,unsupported_format,provider,budget,limits", arguments.category) ) reject(400, "invalid_input");
+		queryExecute("UPDATE document_tasks SET state = CASE WHEN ?::BOOLEAN AND attempts < 3 THEN 'pending' ELSE 'failed' END, next_attempt_at = CURRENT_TIMESTAMP + CASE attempts WHEN 1 THEN INTERVAL '1 minute' WHEN 2 THEN INTERVAL '5 minutes' ELSE INTERVAL '15 minutes' END, error_category = ?, lease_token = NULL, lease_until = NULL WHERE id = CAST(? AS UUID) AND lease_token = CAST(? AS UUID) AND state = 'processing' AND lease_until > CURRENT_TIMESTAMP", [arguments.retryable, arguments.category, arguments.taskId, arguments.leaseToken]);
+	}
+
+	/** commitResults installs B's real results inside this transaction; never exposed by HTTP.
+	 * B must reserve/settle its budget inside processing before any provider call.
+	 * A storage-ready original alone cannot call this or become available.
+	 */
+	boolean function publishTask(required string taskId, required string leaseToken, required any commitResults) {
+		if ( !validId(arguments.taskId) || !validId(arguments.leaseToken) ) return false;
+		var published = false;
+		transaction {
+			var space = queryExecute("SELECT d.space_id FROM document_tasks t JOIN documents d ON d.id = t.document_id WHERE t.id = CAST(? AS UUID)", [arguments.taskId]);
+			if ( !space.recordCount ) return false;
+			queryExecute("SELECT id FROM spaces WHERE id = CAST(? AS BIGINT) FOR UPDATE", [toString(space.space_id[1])]);
+			var task = queryExecute("SELECT t.document_id, t.version_id, COALESCE(d.current_version::TEXT, '') AS previous FROM document_tasks t JOIN documents d ON d.id = t.document_id JOIN document_versions v ON v.id = t.version_id WHERE t.id = CAST(? AS UUID) AND t.lease_token = CAST(? AS UUID) AND t.state = 'processing' AND t.lease_until > CURRENT_TIMESTAMP AND d.deleted_at IS NULL AND d.candidate_version = t.version_id AND v.storage_state = 'ready' FOR UPDATE OF d, t", [arguments.taskId, arguments.leaseToken]);
+			if ( task.recordCount ) {
+				arguments.commitResults(task.document_id[1], task.version_id[1], task.previous[1]);
+				queryExecute("UPDATE documents SET current_version = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", [task.version_id[1], task.document_id[1]]);
+				queryExecute("UPDATE document_tasks SET state = 'completed', lease_token = NULL, lease_until = NULL, error_category = NULL WHERE id = CAST(? AS UUID)", [arguments.taskId]);
+				published = true;
+			}
+		}
+		if ( published ) cleanupSuperseded();
+		return published;
+	}
+
+	struct function deleteDocument(required struct request, required string documentId) {
+		if ( !validId(arguments.documentId) ) reject(400, "invalid_input");
+		transaction {
+			access(arguments.request, true, true);
+			var found = queryExecute("SELECT id FROM documents WHERE id = CAST(? AS UUID) AND space_id = CAST(? AS BIGINT) FOR UPDATE", [arguments.documentId, toString(arguments.request.spaceId)]);
+			if ( !found.recordCount ) reject(404, "not_found");
+			queryExecute("UPDATE documents SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP), cleanup_pending = TRUE WHERE id = CAST(? AS UUID)", [arguments.documentId]);
+			queryExecute("UPDATE document_tasks SET state = 'cancelled', lease_token = NULL, lease_until = NULL WHERE document_id = CAST(? AS UUID) AND state != 'completed'", [arguments.documentId]);
+		}
+		cleanupDocument(arguments.documentId);
+		var result = queryExecute("SELECT cleanup_pending FROM documents WHERE id = CAST(? AS UUID)", [arguments.documentId]);
+		return {documentId: arguments.documentId, status: result.cleanup_pending[1] ? "deleting" : "deleted"};
+	}
+
+	private function removeFiles(required string version) {
+		for ( var file in [staging(arguments.version), original(arguments.version)] ) { if ( fileExists(file) ) fileDelete(file); }
+	}
+
+	function cleanupDocument(required string documentId) {
+		transaction {
+			var found = queryExecute("SELECT id FROM documents WHERE id = CAST(? AS UUID) AND deleted_at IS NOT NULL AND cleanup_pending FOR UPDATE", [arguments.documentId]);
+			if ( !found.recordCount ) return;
+			try {
+				var versions = queryExecute("SELECT v.id, t.state FROM document_versions v JOIN document_tasks t ON t.version_id = v.id WHERE v.document_id = CAST(? AS UUID)", [arguments.documentId]);
+				for ( var version in versions ) {
+					if ( isCustomFunction(variables.cleanupCallback) ) variables.cleanupCallback(arguments.documentId, version.id);
+					else if ( version.state == "completed" ) throw(message="Knowledge cleanup callback required");
+					removeFiles(version.id);
+				}
+				queryExecute("UPDATE document_versions SET storage_state = 'removed' WHERE document_id = CAST(? AS UUID)", [arguments.documentId]);
+				queryExecute("UPDATE documents SET cleanup_pending = FALSE WHERE id = CAST(? AS UUID)", [arguments.documentId]);
+			} catch (any incompleteCleanup) { /* Tombstone stays pending; recovery retries idempotently. */ }
+		}
+	}
+
+	private function cleanupSuperseded() {
+		// Only discarded/failed originals; current published content remains immutable.
+		transaction {
+			var versions = queryExecute("SELECT v.id, v.document_id, t.state FROM document_versions v JOIN documents d ON d.id = v.document_id JOIN document_tasks t ON t.version_id = v.id WHERE d.deleted_at IS NULL AND v.id IS DISTINCT FROM d.current_version AND v.id IS DISTINCT FROM d.candidate_version AND v.storage_state != 'removed' FOR UPDATE OF d, v");
+			for ( var version in versions ) {
+				try {
+					if ( isCustomFunction(variables.cleanupCallback) ) variables.cleanupCallback(version.document_id, version.id);
+					else if ( version.state == "completed" ) continue;
+					removeFiles(version.id);
+					queryExecute("UPDATE document_versions SET storage_state = 'removed' WHERE id = CAST(? AS UUID)", [version.id]);
+				} catch (any incompleteCleanup) { /* Detached revision stays recorded for maintenance retry. */ }
+			}
+		}
+	}
+
+	/** On restart/maintenance: reconcile renames, expired leases, tombstones and >24 h orphans. */
+	private function recoverLeases() {
+		queryExecute("UPDATE document_tasks SET state = CASE WHEN attempts < 3 THEN 'pending' ELSE 'failed' END, error_category = 'interrupted', next_attempt_at = CURRENT_TIMESTAMP + CASE attempts WHEN 1 THEN INTERVAL '1 minute' WHEN 2 THEN INTERVAL '5 minutes' ELSE INTERVAL '15 minutes' END, lease_token = NULL, lease_until = NULL WHERE state = 'processing' AND lease_until <= CURRENT_TIMESTAMP");
+	}
+
+	function recover() {
+		var stored = queryExecute("SELECT id FROM document_versions WHERE storage_state = 'stored'");
+		for ( var version in stored ) promote(version.id);
+		recoverLeases();
+		var deleted = queryExecute("SELECT id FROM documents WHERE cleanup_pending");
+		for ( var document in deleted ) cleanupDocument(document.id);
+		cleanupSuperseded();
+		for ( var directory in [root() & "/staging", root() & "/uploads"] ) {
+			for ( var entry in directoryList(directory, false, "query") ) {
+				if ( dateDiff("h", entry.dateLastModified, now()) <= 24 ) continue;
+				var file = directory & "/" & entry.name;
+				if ( entry.type == "Dir" && directory == root() & "/uploads" && validId(entry.name) ) directoryDelete(file, true);
+				else if ( directory == root() & "/staging" && validId(listFirst(entry.name, ".")) ) {
+					var referenced = queryExecute("SELECT id FROM document_versions WHERE id = CAST(? AS UUID) AND storage_state = 'stored'", [listFirst(entry.name, ".")]);
+					if ( !referenced.recordCount ) fileDelete(file);
+				}
+			}
+		}
+	}
+
+	struct function handle(required string operation, required struct request) {
+		try {
+			var methods = {documents: "GET", original: "GET", task: "GET", retry: "POST", delete: "DELETE"};
+			if ( !structKeyExists(methods, arguments.operation) ) reject(404, "not_found");
+			if ( arguments.request.method != methods[arguments.operation] ) reject(405, "method");
+			switch ( arguments.operation ) {
+				case "documents": return {status: 200, body: {documents: listDocuments(arguments.request)}};
+				case "original": return {status: 200, body: {}, download: getOriginal(arguments.request, arguments.request.documentId)};
+				case "task": return {status: 200, body: {task: getTask(arguments.request, arguments.request.taskId)}};
+				case "retry": retryTask(arguments.request, arguments.request.taskId); return {status: 202, body: {task: getTask(arguments.request, arguments.request.taskId)}};
+				case "delete": var deleted = deleteDocument(arguments.request, arguments.request.documentId); return {status: deleted.status == "deleted" ? 200 : 202, body: deleted};
+			}
+		} catch (any error) { return safeError(error); }
+	}
+
+	struct function safeError(required any error) {
+		if ( arguments.error.type == "SecondBrain.Library" ) return {status: toNumeric(arguments.error.errorCode), body: {errorCategory: arguments.error.message, message: "No se pudo completar la operación."}};
+		return {status: 500, body: {errorCategory: "internal", message: "No se pudo completar la operación."}};
+	}
+}

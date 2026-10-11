@@ -1,6 +1,6 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones y permisos; frontend Next.js con delegación same-origin fija. Fase 01 no llama a servicios de IA y no implementa biblioteca, ingesta ni chats.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y almacenamiento privado/tareas de biblioteca (rol A, fase 02). Frontend Next.js con delegación same-origin de cuentas. La biblioteca aún no tiene UI ni pipeline de ingesta/IA: guardar originales no los hace disponibles para consultas.
 
 ## Entorno
 
@@ -97,4 +97,17 @@ La ruta de desarrollo `http://127.0.0.1:3000/feasibility` abre únicamente fixtu
 
 ## Alcance futuro, no implementado
 
-Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. Los probes no implican RAG productivo ni acreditan facturación. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias y presupuesto requieren trabajo posterior. Los probes no implican RAG productivo ni acreditan facturación. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+
+## Fase 02 — plataforma y seguridad (A)
+
+Migración 2 y volumen privado `originals_data`; API BoxLang de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. **Fase En curso:** faltan presupuesto de B, frontend de C y su integración; no se ejecuta ingesta ni IA.
+
+```sh
+docker compose up -d --no-deps --wait boxlang
+docker compose exec -T boxlang boxlang backend/migrations/migrate.bxs
+docker compose exec -T -e P02_RUN=core-check-01 boxlang boxlang tests/phase02-core.bxs
+docker compose exec -T boxlang boxlang backend/library-maintenance.bxs
+```
+
+El [informe A](docs/plan/evidence/phase02-platform-security.md) contiene operaciones/parámetros, límites, contrato para B/C y la secuencia HTTP completa con cuota concurrente, reinicio real y limpieza acotada. Ejecutar las migraciones antes de usar la biblioteca; originales de usuarios nunca se guardan en `backend/` ni se sirven como archivos públicos.
