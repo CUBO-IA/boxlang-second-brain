@@ -2,6 +2,8 @@
 
 Fecha: 2026-10-11. Entorno aislado `second-brain-phase01`; revisión de base `46d9cd3`. bx-ai `3.5.0`, BoxLang `1.18.0`, PostgreSQL/pgvector Compose. Entrada sintética; sin documentos privados ni credenciales en este registro.
 
+**Nota histórica:** se conserva el resultado y coste del probe anterior. El parser/roundtrip fallido se corrigió después en `phase00-finish`; seguimiento, coste acumulado y alcance actualizado en [cierre de fase 00](phase00-closure.md). Esa evidencia supersede solo las conclusiones temporales del parser, no altera los resultados históricos.
+
 ## Preflight
 
 - Referencia oficial Standard consultada el 2026-10-11: [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios](https://developers.openai.com/api/docs/pricing), [embeddings](https://developers.openai.com/api/docs/guides/embeddings).

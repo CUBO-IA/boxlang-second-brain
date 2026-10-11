@@ -150,6 +150,19 @@ input::placeholder { color: var(--ink-muted); opacity: 1; }
 .location-chip { display: inline-block; margin: 12px 0; padding: 4px 8px; border-radius: 4px; background: var(--surface-teal); color: var(--ink); font: .78rem ui-monospace, monospace; }
 .viewer pre { overflow-x: auto; padding: 16px; border-radius: 8px; background: #103b38; color: #f4f1df; white-space: pre-wrap; overflow-wrap: anywhere; }
 .viewer pre code { font: .86rem/1.8 ui-monospace, monospace; }
+.markdown-rendered, .markdown-safety, .pdf-original { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.markdown-rendered { overflow-wrap: anywhere; }
+.markdown-rendered > :last-child { margin-bottom: 0; }
+.markdown-rendered pre { overflow-x: auto; padding: 12px; border-radius: 6px; background: #103b38; color: #f4f1df; }
+.markdown-rendered code, .markdown-safety code { font: .86rem/1.6 ui-monospace, monospace; }
+.markdown-coordinate-highlight, .pdf-coordinate-highlight { border-radius: 3px; background: #fde68a; color: #34230a; box-shadow: 0 0 0 2px #fde68a; }
+.markdown-safety { margin-top: 14px; font-size: .82rem; }
+.markdown-safety summary { color: var(--ink); font-weight: 650; cursor: pointer; }
+.markdown-safety [data-testid="markdown-safety-fixture"] { padding-top: 12px; overflow-wrap: anywhere; }
+.markdown-safety [data-inert-markdown-link], .markdown-safety [data-inert-markdown-image] { padding: 0 2px; background: #f1f5f9; }
+.pdf-original { max-height: 680px; overflow: auto; background: #f1f5f9; }
+.pdf-original .react-pdf__Page { margin: 0 auto; }
+.pdf-fixture figcaption { margin-top: 10px; color: var(--ink-secondary); font-size: .78rem; }
 .citation { font-size: .85rem; }
 .citation span { color: var(--ink-muted); }
 .graph-root { padding: 12px; border-radius: 7px; background: var(--ink); color: #f4f1df; font-weight: 650; }

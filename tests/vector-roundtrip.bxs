@@ -1,0 +1,58 @@
+// Regression against the installed bx-ai PostgreSQL vector store/parser.
+table = "p00_roundtrip_" & lCase( replace( createUUID(), "-", "", "all" ) );
+memory = new bxModules.bxai.models.memory.vector.PostgresVectorMemory( collection=table );
+vector = [];
+for ( i=1; i<=1536; i++ ) vector.append( 0 );
+vector[ 1 ] = 1e-6;
+vector[ 2 ] = -2.5e-6;
+vector[ 3 ] = 3e20;
+vector[ 4 ] = -4;
+
+function assertFloat32Close( required numeric actual, required numeric expected, required numeric relativeTolerance, required string path ) {
+	if ( abs( arguments.actual - arguments.expected ) > abs( arguments.expected ) * arguments.relativeTolerance ) {
+		throw( message="#arguments.path# expected #arguments.expected#, got #arguments.actual#" );
+	}
+}
+
+function assertCanonical( required numeric actual, required numeric expected, required string path ) {
+	if ( arguments.actual != arguments.expected ) throw( message="#arguments.path# expected exact PostgreSQL value #arguments.expected#, got #arguments.actual#" );
+}
+
+try {
+	memory.configure( {
+		datasource="secondBrain",
+		table=table,
+		collection=table,
+		dimensions=1536,
+		distanceFunction="L2",
+		indexType="HNSW"
+	} );
+	memory.storeDocument( "scientific-vector", "synthetic scientific notation vector", vector, { spaceId="P00", documentId="roundtrip" } );
+
+	stored = memory.getById( "scientific-vector" );
+	matches = memory.findSimilar( vector, 1, { spaceId="P00", documentId="roundtrip" } );
+	database = queryExecute(
+		"SELECT CAST(embedding AS text) AS embedding_text FROM #table# WHERE id = :id AND collection = :collection",
+		{ id="scientific-vector", collection=table },
+		{ datasource="secondBrain", returntype="array" }
+	);
+	if ( stored.isEmpty() || stored.id != "scientific-vector" || stored.metadata.spaceId != "P00" || stored.metadata.documentId != "roundtrip"
+		|| matches.len() != 1 || matches[ 1 ].id != "scientific-vector" || matches[ 1 ].metadata.spaceId != "P00" || matches[ 1 ].metadata.documentId != "roundtrip" || database.len() != 1 ) {
+		throw( message="bx-ai store/getById/findSimilar did not return the stored vector" );
+	}
+	dbVector = jsonDeserialize( database[ 1 ].embedding_text );
+	if ( !findNoCase( "e-", database[ 1 ].embedding_text ) || !find( "e+", database[ 1 ].embedding_text ) || !find( "-2.5e-06", database[ 1 ].embedding_text ) || !find( ",0,", database[ 1 ].embedding_text ) ) {
+		throw( message="PostgreSQL fixture must exercise positive/negative exponents, signed values and zero" );
+	}
+	if ( stored.embedding.len() != 1536 || matches[ 1 ].embedding.len() != 1536 || dbVector.len() != 1536 ) {
+		throw( message="Vector roundtrip did not preserve 1,536 dimensions" );
+	}
+	for ( dimension=1; dimension<=1536; dimension++ ) {
+		assertFloat32Close( dbVector[ dimension ], vector[ dimension ], 1e-6, "PostgreSQL dimension #dimension#" );
+		assertCanonical( stored.embedding[ dimension ], dbVector[ dimension ], "getById dimension #dimension#" );
+		assertCanonical( matches[ 1 ].embedding[ dimension ], dbVector[ dimension ], "findSimilar dimension #dimension#" );
+	}
+	println( "OK: bx-ai store/getById/findSimilar preserve PostgreSQL's scientific-notation 1,536-vector values" );
+} finally {
+	queryExecute( "DROP TABLE IF EXISTS #table#", {}, { datasource="secondBrain" } );
+}
