@@ -8,8 +8,8 @@ services:
     environment:
       BOXLANG_URL: http://boxlang:8080
       NEXT_TELEMETRY_DISABLED: "1"
-    ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    expose:
+      - "3000"
     volumes:
       - ./frontend/app:/app/app:ro
       - ./tests:/tests:ro
@@ -49,8 +49,8 @@ services:
       - .:/modules/second-brain:ro
       - ./backend:/app:ro
       - originals_data:/data/second-brain
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    expose:
+      - "8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,8 +67,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-second_brain}
       POSTGRES_USER: ${POSTGRES_USER:-second_brain}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configura POSTGRES_PASSWORD en .env}
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-pgvector.sql:ro

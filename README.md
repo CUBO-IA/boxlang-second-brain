@@ -29,6 +29,12 @@ La migración de cuentas es versionada e idempotente; ejecútala también al act
 
 `APP_ORIGIN` explícito prevalece; si se omite, Compose lo deriva de `FRONTEND_PORT` (por defecto `http://127.0.0.1:3000`). Para `localhost`, HTTPS o un dominio, configura el origen exacto que usa el navegador. Los puertos Compose pueden ajustarse con `FRONTEND_PORT`, `BACKEND_PORT` y `POSTGRES_PORT`.
 
+## Despliegue en Coolify
+
+`compose.yaml` no publica puertos del host; `compose.override.yaml` se carga automáticamente para desarrollo local y conserva los mapeos loopback anteriores. Si Coolify invoca Compose con `-f compose.yaml`, el override no se incluye: publica el frontend mediante su puerto interno `3000` y configura el dominio público solo en `frontend` (por ejemplo, `https://brain.example.com:3000` en Domains). El origen que verá el navegador sigue siendo `https://brain.example.com`, sin `:3000`; establece `APP_ORIGIN` exactamente a ese origen HTTPS. No asignes dominios a `boxlang` ni `postgres`: los servicios se comunican por sus nombres internos (`boxlang:8080` y `postgres:5432`).
+
+Los bind mounts del repositorio requieren habilitar **Preserve repository during deployment** en Coolify. Tras corregir la configuración, recarga y vuelve a desplegar el servicio principal. El despliegue remoto no se ha probado.
+
 ## API de fase 01
 
 Next.js permite únicamente estas rutas same-origin y las delega a `backend/api/account.bxm`; autorización, persistencia y reglas de negocio viven en `backend/secondBrain/AccountService.bx`.
