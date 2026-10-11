@@ -33,6 +33,17 @@ docker compose -p second-brain-phase03-evidence exec -T frontend pnpm lint
 
 Las salidas seguras registradas incluyen `OK: Second Brain, BoxLang AI, PostgreSQL y pgvector disponibles.` (smoke), `OK: inferred claims require explicit premises and current retrieved citations.` (regresión de inferencia sin proveedor) y salida exitosa de las comprobaciones deterministas, TypeScript y lint. La evidencia de fixture/navegador está en los informes P03 comprometidos. Estos comandos son instrucciones de reproducción; no se afirma que se hayan vuelto a ejecutar durante la revisión de cierre.
 
+## Fixture y recorrido de navegador
+
+El fixture usa `ProviderDouble` y datos sintéticos, sin llamadas de red al proveedor. Elija un slug nuevo de 1–24 caracteres en minúsculas, números o guiones; aquí se usa `browser-check-02`:
+
+```sh
+P03_BROWSER_FIXTURE_RUN=browser-check-02 docker compose -p second-brain-phase03-evidence exec -T -e P02_ISOLATED_DATABASE=YES -e P03_BROWSER_FIXTURE_RUN=browser-check-02 boxlang boxlang tests/phase03-browser-fixture.bxs
+P03_BROWSER_FIXTURE_RUN=browser-check-02 P03_FRONTEND_URL=http://127.0.0.1:3000 P03_ORIGIN=http://127.0.0.1:3005 docker compose -p second-brain-phase03-evidence exec -T -e P03_BROWSER_FIXTURE_RUN=browser-check-02 -e P03_FRONTEND_URL=http://127.0.0.1:3000 -e P03_ORIGIN=http://127.0.0.1:3005 frontend node --input-type=module < tests/phase03-frontend.mjs
+```
+
+El primer comando imprime credenciales sintéticas de owner/reader. Para la comprobación manual, abra `http://127.0.0.1:3005/app` como owner y seleccione `Phase 03 browser-check-02`: compruebe en ES y EN una cita actual con resaltado de la frase repetida `«café 🧠»`, la conversación histórica cuya fuente fue reemplazada y una conversación compartida como reader en modo de solo lectura (sin controles para continuar). El script Node verifica offsets Unicode, permisos, proxy y errores HTTP. Use un slug nuevo en cada repetición.
+
 ## Aceptación real autorizada — registro histórico
 
 Los recorridos usaron únicamente datos sintéticos en el Compose aislado. La clave no se imprimió ni se incluyó en fixtures/logs; el opt-in se pasó solo al proceso de aceptación y el servicio ordinario permaneció `P00_ALLOW_PROVIDER_CALLS=NO`. No se limpiaron filas del ledger. La primera ejecución añadió reservas 942–956 (15/15 liquidadas, cero retenidas); las dos extensiones añadieron 957–976 y 977–996 (20/20 liquidadas cada una, cero retenidas).
