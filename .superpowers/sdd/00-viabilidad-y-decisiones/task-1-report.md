@@ -445,3 +445,79 @@ git diff --check
 ```
 
 No se modificaron los fixtures principales `locations.xlsx` ni el manifest; por ello no se repitió `tests/contracts.mjs`. Smoke, UI, lint/build, proveedor y suites ajenas tampoco se repitieron: sus entradas permanecen sin cambios; no hubo claves, llamadas externas, cambios de fase 01 ni apagado. N7/N9 quedan **corregidos localmente y comprobados**; la fase global sigue **Bloqueada** por falta de key/tarifas autorizadas y evidencia del entorno externo. Pendiente revisión independiente de Sol.
+
+## Revisión final global — corrección local G1/G2/G3 (2026-10-11)
+
+Se aplicaron únicamente los findings de `.superpowers/sdd/00-viabilidad-y-decisiones/sol-final-review.md`:
+
+- **G1/G2 (`EvidenceExtractor.zipXml`)**: decodificación UTF-8 estricta, normalización de BOM UTF-8 inicial, rechazo explícito de bytes inválidos y rechazo de contenido que no empieza por XML literal antes de `xmlParse`. La BIF recibe `XML=` y `validator=` nombrados con secure processing, DOCTYPE rechazado, entidades externas deshabilitadas y modo lenient apagado.
+- **G3 (`tests/provider.bxs`)**: validación pura de contenido esperado, `finish_reason=stop`, `usage` numérico entero finito/no negativo, modelo observado exacto y coste por operación. El uso ausente/inválido o coste de chat + reserva impiden la segunda llamada. Embedding valida también modelo, vector 1.536, uso y coste. Los registros conservan chat y embedding separados; `PASS` solo se escribe después de validar ambos, conocer el coste combinado dentro del techo `(0,1]` y completar el roundtrip pgvector. Los checks sintéticos solo devuelven `VALIDATED_LOGIC`, nunca `PASS`.
+- Los checks de seguridad usan exclusivamente XML, una ruta temporal y un servidor HTTP de loopback sintéticos. No se leyeron documentos privados ni se realizó tráfico externo. `provider.bxs` no ejecutó llamadas reales.
+
+### Entorno y comandos ejecutados
+
+El `.env` ya estaba copiado privadamente en este worktree con permisos `0600`; no se leyó ni se imprimió. Antes de levantar el entorno, `docker compose -p second-brain-phase00 ps --all` mostró los tres contenedores `Exited` (BoxLang/frontend 143, Postgres 0); no se tocaron. Compose aislado de este worktree:
+
+```sh
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 up -d --build
+```
+
+Resultado: imágenes construidas, red/volumen `second-brain-phase01` creados y los tres servicios iniciados. `docker compose -p second-brain-phase01 ps` mostró BoxLang, frontend y Postgres `Up (healthy)` en `127.0.0.1:8082`, `:3002` y `:55435`. El proyecto original y `second-brain-phase00` no se iniciaron ni apagaron. Se dejan los servicios phase01 arriba según instrucción.
+
+Checks focalizados y smoke de infraestructura, todos mediante Docker Compose:
+
+```sh
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 exec boxlang boxlang tests/extraction.bxs
+```
+
+Salida final (exit 0):
+
+```text
+OK: MD=bx-ai MarkdownLoader; TXT/code=bx-ai TextLoader; JSON=bx-ai JSONLoader; CSV=bx-ai CSVLoader; PDF=bx-ai PDFLoader + PDFBox page 2 exact citation; DOCX=secure XML tree; escaped ampersand decoded; ordered runs and paragraph 2 citation exact; XLSX=secure XML tree; Summary first/distractor 999, Limits second/target 250; shared-string entities decoded; XLSX inline rich-text runs concatenate to literal A & B through full ZIP extraction; XLSX rejects unsupported cell type before reading its <v> value; XLSX rejects B0, missing cell refs, fractional/out-of-range shared indices and unsupported formulas
+```
+
+```sh
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 exec -e BOXLANG_CONFIG=/modules/second-brain/tests/boxlang-permissive-config.json boxlang boxlang tests/extraction-security.bxs
+```
+
+Salida final (exit 0):
+
+```text
+OK: shared zipXml rejects DOCX localhost URL/XLSX local path before I/O; normalizes UTF-8 BOM, rejects malformed UTF-8, and rejects DOCTYPE despite permissive defaults
+```
+
+El handler de loopback observó cero solicitudes. La configuración alternativa demuestra primero que el default permisivo acepta el DOCTYPE sintético; `zipXml` lo rechaza con la política nombrada. Los mensajes XML de diagnóstico que acompañan al rechazo son del parser y no impidieron el exit 0.
+
+```sh
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 exec boxlang boxlang tests/provider-validation.bxs
+```
+
+```text
+OK: pure synthetic provider validation rejects invalid chat/model/usage/budget before continuation; valid responses yield logical-only summary
+```
+
+Solo guard de opt-in, sin leer la variable de clave ni llamar al proveedor:
+
+```sh
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 exec -e P00_ALLOW_PROVIDER_CALLS=NO boxlang boxlang tests/provider.bxs
+```
+
+```json
+{"reason":"P00_ALLOW_PROVIDER_CALLS must equal YES","passed":false,"requestsMade":0,"status":"BLOCKED"}
+```
+
+```sh
+FRONTEND_PORT=3002 BACKEND_PORT=8082 POSTGRES_PORT=55435 docker compose -p second-brain-phase01 exec boxlang boxlang tests/smoke.bxs
+```
+
+```text
+OK: Second Brain, BoxLang AI, PostgreSQL y pgvector disponibles.
+```
+
+`git diff --cached --check` pasó sin salida. No se repitieron suites no afectadas. `DESIGN.md` y `docs/plan/*` permanecen intactos y untracked.
+
+### Resultado y límites
+
+G1/G2/G3 quedan **corregidos y comprobados localmente**. No se configuró ni consumió una clave y no se acredita compatibilidad real, uso, coste o tarifa autorizada de los modelos; por tanto, fase 00 permanece **Bloqueada**, sin PASS global ni cambio de estado. No se implementó fase 01, no hubo merge/push ni shutdown.
+
+Commit estable de código y checks: `7e44f79` (`fix: close phase 00 final review findings`). Este informe se añade en un commit docs-only posterior.
