@@ -21,7 +21,7 @@ Las dependencias son acumulativas: cerrar una fase antes de avanzar a la siguien
 | Fase | Resultado verificable | Estado |
 |---|---|---|
 | [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Capacidades locales revisadas; evidencia externa y condiciones de operación aún requeridas | Bloqueada |
-| [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | En curso |
+| [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Verificada |
 | [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | Pendiente |
 | [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | Pendiente |
 | [04 — Formatos y previsualizadores](04-formatos-y-previsualizadores.md) | PDF, MD, JSON, código, DOCX, CSV y XLSX con consulta, coordenadas y visor funcional | Pendiente |

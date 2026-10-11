@@ -7,6 +7,10 @@ function record( required struct event ) {
 	fileAppend( recordPath, line & char(10), "utf-8" );
 	println( line );
 }
+function safeError( required any failure, required string apiKey ) {
+	var message = arguments.failure.message ?: "provider request or validation failed";
+	return len(arguments.apiKey) ? replace(toString(message), arguments.apiKey, "[REDACTED]", "all") : toString(message);
+}
 function blocked( required string reason ) {
 	record( { status="BLOCKED", passed=false, requestsMade=0, reason=arguments.reason } );
 }
@@ -15,12 +19,12 @@ function requestChat(required struct probeConfig, required string apiKey, requir
 	var observation={modelObserved="",finishReason="",response="",usage={}};
 	var validated={};
 	try {
-		response=aiChat("Reply with exactly: P00_PROVIDER_PROBE_OK",{model=arguments.probeConfig.chatModel,max_completion_tokens=arguments.probeConfig.maxCompletionTokens},{provider=arguments.probeConfig.provider,apiKey=arguments.apiKey,timeout=arguments.probeConfig.timeoutSeconds,returnFormat="raw",logRequest=false,logResponse=false});
+		response=aiChat("Reply with exactly: P00_PROVIDER_PROBE_OK",{model=arguments.probeConfig.chatModel,max_completion_tokens=arguments.probeConfig.maxCompletionTokens,reasoning_effort=arguments.probeConfig.reasoningEffort},{provider=arguments.probeConfig.provider,apiKey=arguments.apiKey,timeout=arguments.probeConfig.timeoutSeconds,returnFormat="raw",logRequest=false,logResponse=false});
 		observation=arguments.validator.observeChat(response);
 		validated=arguments.validator.validateChat(response,arguments.probeConfig.chatModel,"P00_PROVIDER_PROBE_OK",arguments.inputRate,arguments.outputRate);
 		return {ok=true,observation=observation,validation=validated};
 	} catch(any failure) {
-		return {ok=false,observation=observation,validation=validated,error=failure.message ?: "provider or chat validation error"};
+		return {ok=false,observation=observation,validation=validated,error=safeError(failure,arguments.apiKey)};
 	}
 }
 function requestEmbedding(required struct probeConfig, required string apiKey, required any validator, required numeric inputRate) {
@@ -33,7 +37,7 @@ function requestEmbedding(required struct probeConfig, required string apiKey, r
 		validated=arguments.validator.validateEmbedding(response,arguments.probeConfig.embeddingModel,arguments.inputRate);
 		return {ok=true,observation=observation,validation=validated};
 	} catch(any failure) {
-		return {ok=false,observation=observation,validation=validated,error=failure.message ?: "provider or embedding validation error"};
+		return {ok=false,observation=observation,validation=validated,error=safeError(failure,arguments.apiKey)};
 	}
 }
 function checkEmbeddingBudget(required any validator, required numeric chatCost, required numeric embeddingReserve, required numeric ceiling) {
@@ -54,7 +58,10 @@ function runPgvectorRoundtrip(required string table, required array vector) {
 		memory.storeDocument("provider-roundtrip","synthetic provider embedding",arguments.vector,{spaceId="P00",documentId="roundtrip",probe="provider"});
 		found=memory.findSimilar(arguments.vector,1,{spaceId="P00",documentId="roundtrip"});
 		if(found.len()!=1 || found[1].id!="provider-roundtrip" || found[1].embedding.len()!=1536) throw(message="Provider vector pgvector roundtrip did not return 1,536 dimensions");
-		for(var dimension=1;dimension<=1536;dimension++) if(abs(found[1].embedding[dimension]-arguments.vector[dimension])>0.000001) throw(message="Provider vector pgvector changed dimension #dimension#");
+		for(var dimension=1;dimension<=1536;dimension++) {
+			var delta=abs(found[1].embedding[dimension]-arguments.vector[dimension]);
+			if(delta>0.000001) throw(message="Provider vector pgvector roundtrip error at dimension #dimension#: #delta#");
+		}
 		return {ok=true,resultCount=found.len()};
 	} catch(any failure) { return {ok=false,error=failure.message ?: "pgvector roundtrip error"}; }
 	finally { queryExecute("DROP TABLE IF EXISTS #arguments.table#",{}, {datasource="secondBrain"}); }
@@ -75,7 +82,7 @@ if ( !validation.isFiniteNumber(ceiling) || ceiling <= 0 || ceiling > 1 || !vali
 estimatedMaxUSD = (64*chatInRate + 32*chatOutRate + 64*embeddingRate)/1000000;
 if ( !validation.isFiniteNumber(estimatedMaxUSD) || estimatedMaxUSD > ceiling ) { blocked("Conservative combined estimate exceeds configured ceiling"); abort; }
 
-config = { provider="openai", chatModel="gpt-6-luna", embeddingModel="text-embedding-3-small", chatEndpoint="/v1/chat/completions", embeddingEndpoint="/v1/embeddings", timeoutSeconds=30, retries=0, maxCompletionTokens=32, priceDate=priceDate, priceReference=priceReference, ratesUSDPerMillion={chatInput=chatInRate,chatOutput=chatOutRate,embeddingInput=embeddingRate}, ceilingUSD=ceiling, estimatedMaximumUSD=estimatedMaxUSD };
+config = { provider="openai", chatModel="gpt-6-luna", embeddingModel="text-embedding-3-small", chatEndpoint="/v1/chat/completions", embeddingEndpoint="/v1/embeddings", timeoutSeconds=30, retries=0, maxCompletionTokens=32, reasoningEffort="none", priceDate=priceDate, priceReference=priceReference, ratesUSDPerMillion={chatInput=chatInRate,chatOutput=chatOutRate,embeddingInput=embeddingRate}, ceilingUSD=ceiling, estimatedMaximumUSD=estimatedMaxUSD };
 chatRun=requestChat(config,key,validation,chatInRate,chatOutRate);
 chatObservation=chatRun.observation;
 chatValidation=chatRun.validation;

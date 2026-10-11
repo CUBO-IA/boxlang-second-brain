@@ -27,7 +27,7 @@ La migración de cuentas es versionada e idempotente; ejecútala también al act
 
 `APP_ORIGIN` debe coincidir exactamente con el origen público del navegador. En producción configura un origen `https://` detrás de TLS; la cookie de sesión recibe `Secure`. HTTP solo se admite para `localhost` o `127.0.0.1`. No publiques estos servicios directamente a Internet.
 
-Si cambias el puerto/origen del frontend, configura el mismo origen en `APP_ORIGIN`. Los puertos Compose pueden ajustarse con `FRONTEND_PORT`, `BACKEND_PORT` y `POSTGRES_PORT`.
+`APP_ORIGIN` explícito prevalece; si se omite, Compose lo deriva de `FRONTEND_PORT` (por defecto `http://127.0.0.1:3000`). Para `localhost`, HTTPS o un dominio, configura el origen exacto que usa el navegador. Los puertos Compose pueden ajustarse con `FRONTEND_PORT`, `BACKEND_PORT` y `POSTGRES_PORT`.
 
 ## API de fase 01
 
@@ -76,13 +76,13 @@ P00_ALLOW_PROVIDER_CALLS=YES docker compose -p second-brain-phase01 exec -e P00_
 
 El `.env.example` deja `P00_MAX_USD=1` y fecha/fuente/tarifas explícitas. Según el precio **Standard** publicado a **2026-10-11**, el probe actual usa `gpt-6-luna`: USD 0.10/M tokens de entrada y USD 0.50/M de salida; `text-embedding-3-small`: USD 0.02/M de entrada. Referencias: [modelo GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios API](https://developers.openai.com/api/docs/pricing) y [modelos de embeddings](https://developers.openai.com/api/docs/guides/embeddings). Las tarifas pueden variar por modalidad y procesamiento regional; vuelve a confirmar fecha, tipo de endpoint y tarifa antes de permitir llamadas.
 
-Los docs públicos identifican ambos modelos y el endpoint de Chat Completions para `gpt-6-luna`; **no se verificó acceso de esta organización/cuenta** porque el proceso actual no tiene `OPENAI_API_KEY`. Por eso no se ejecutó el probe ni se cambió de modelo. El guard requiere además el opt-in explícito, tarifas/fecha/referencia válidas y un techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
+El probe sintético ejecutado en el worktree validó las respuestas de chat y embedding, uso reportado y 1,536 dimensiones. El roundtrip pgvector falló en la dimensión 92 y queda pendiente diagnosticar; el resultado completo y coste calculado están en [evidencia P00](docs/plan/evidence/provider-phase00.md). No se cambió de modelo. El guard requiere además el opt-in explícito, tarifas/fecha/referencia válidas y un techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
 
 ## MCP y documentación
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Estado de seguimiento: fase 01 **En curso** hasta revisión independiente; fase 00 continúa **Bloqueada** por evidencia externa pendiente. Ver [plan e informe de fase 01](docs/plan/01-cuentas-espacios-y-permisos.md) y [verificación](docs/plan/verificacion.md).
+Estado de seguimiento: fase 01 **Verificada** con gate aprobado por Sol; fase 00 continúa **Bloqueada** por roundtrip vectorial y evidencia externa pendiente. Ver [plan e informe de fase 01](docs/plan/01-cuentas-espacios-y-permisos.md), [evidencia de proveedor](docs/plan/evidence/provider-phase00.md) y [verificación](docs/plan/verificacion.md).
 
 ## Alcance futuro, no implementado
 

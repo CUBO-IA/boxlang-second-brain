@@ -30,7 +30,7 @@ services:
     environment:
       BOXLANG_CONFIG: /modules/second-brain/config/boxlang.json
       REWRITES: "false"
-      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3002}
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${FRONTEND_PORT:-3000}}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       P00_ALLOW_PROVIDER_CALLS: ${P00_ALLOW_PROVIDER_CALLS:-NO}
       P00_MAX_USD: ${P00_MAX_USD:-1}

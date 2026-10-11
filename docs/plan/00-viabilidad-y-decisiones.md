@@ -11,7 +11,7 @@ Demostrar que la base instalada puede cumplir los contratos críticos antes de d
 ## Trabajo ordenado
 
 - [ ] **00.1 — Línea base.** Levantar Compose y ejecutar `tests/smoke.bxs` y `tests/http.mjs` con los comandos de [verificación](verificacion.md#comandos-existentes). Registrar versiones efectivas, resultado y revisión del repositorio.
-- [ ] **00.2 — Respuestas reales.** Desde BoxLang AI instalado, enviar una petición sintética a `gpt-6-luna`. Registrar endpoint/API compatible, configuración, respuesta y uso reportado. Si no funciona, identificar si falla acceso, API o módulo; no sustituir el modelo silenciosamente.
+- [x] **00.2 — Respuestas reales.** Chat sintético validado desde bx-ai 3.5.0 con `gpt-6-luna`; respuesta, endpoint, configuración, uso y coste calculado registrados en [evidencia del probe](evidence/provider-phase00.md).
 - [ ] **00.3 — Embeddings.** Generar un embedding con `text-embedding-3-small`, comprobar su longitud y probar inserción/recuperación en pgvector. Confirmar o bloquear las 1.536 dimensiones propuestas antes de crear el esquema de negocio.
 - [ ] **00.4 — Aislamiento vectorial.** Crear datos sintéticos temporales de dos espacios con textos casi idénticos. Consultar uno y demostrar que el filtro se aplica en la recuperación, no después. Comprobar también selección de documentos.
 - [ ] **00.5 — Ciclo vectorial.** Sustituir y eliminar los vectores de un documento sin afectar otro del mismo espacio; comprobar metadatos y ausencia de resultados viejos. Limpiar solo los datos creados por la prueba.
@@ -29,8 +29,8 @@ Completar esta tabla con resultado real y enlace a la evidencia. «Por decidir»
 
 | Decisión | Resultado que debe registrarse | Estado inicial |
 |---|---|---|
-| Modelo de respuestas | Acceso a `gpt-6-luna`, API compatible con `bx-ai`, configuración y límites de respuesta | Por validar |
-| Embeddings | Acceso al modelo, dimensiones reales y compatibilidad del almacenamiento | Por validar |
+| Modelo de respuestas | Acceso a `gpt-6-luna`, Chat Completions compatible con `bx-ai`, respuesta exacta y uso; coste calculado, no conciliado con cuenta | Verificado en probe sintético |
+| Embeddings | `text-embedding-3-small` accesible; dimensión observada 1,536; roundtrip de lectura falla en dimensión 92 | Parcial: compatibilidad de almacenamiento por validar |
 | Recuperación | Cómo aplicar espacio/documentos antes de recuperar y cómo comprobarlo | Por validar |
 | Vectores | Operaciones reales de inserción, sustitución y borrado con metadatos | Por validar |
 | Extracción/particionado | Loader por formato, ubicaciones, tamaños de fragmento y límites estructurales | Por decidir tras pruebas |
@@ -60,7 +60,7 @@ Completar esta tabla con resultado real y enlace a la evidencia. «Por decidir»
 
 ## Ejecución de Task 1
 
-Resultados, comandos, versiones, decisiones propuestas y bloqueos: [informe Task 1](../../.superpowers/sdd/00-viabilidad-y-decisiones/task-1-report.md). Sol aprobó localmente la última fix wave G1/G2/G3 en [re-revisión final](../../.superpowers/sdd/00-viabilidad-y-decisiones/sol-final-rereview.md); los checks locales de extracción/seguridad/validación sintética no equivalen a tráfico real de proveedor ni a evidencia operativa externa. Fase 00 permanece Bloqueada: no se validaron respuestas reales, dimensiones/uso/coste/tarifas de modelos ni host/dominio/TLS/condiciones de operación.
+Resultados históricos, comandos y bloqueos: [informe Task 1](../../.superpowers/sdd/00-viabilidad-y-decisiones/task-1-report.md). Sol aprobó localmente la última fix wave G1/G2/G3 en [re-revisión final](../../.superpowers/sdd/00-viabilidad-y-decisiones/sol-final-rereview.md). El probe real y acotado está en [evidencia del proveedor](evidence/provider-phase00.md): chat y embedding validados, pero el roundtrip pgvector falla; no se repiten pruebas de extracción ni seguridad por ello. Fase 00 sigue **Bloqueada**, entre otros, por roundtrip vectorial, aislamiento/ciclo, y operación externa pendiente (hostname/TLS/condiciones de operación); las respuestas y tarifas no acreditan facturación de cuenta.
 
 ## Defaults locales propuestos para implementación (no medidos)
 

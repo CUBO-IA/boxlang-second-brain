@@ -1,6 +1,6 @@
 # Fase 01 — Cuentas, espacios y permisos
 
-**Estado:** En curso; implementación y pruebas locales aprobadas, revisión independiente de Sol pendiente. Fase 00 sigue Bloqueada por evidencia externa; el avance de fase 01 está autorizado expresamente y no cambia ese estado. [Índice](README.md).
+**Estado:** Verificada y completa para el entorno aislado acreditado. Sol aprobó calidad y gate de fase 01 en su [re-revisión R1](../../.superpowers/sdd/01-cuentas-espacios-y-permisos/sol-rereview-1.md), fechada 2026-10-11. Fase 00 sigue Bloqueada por evidencia externa/técnica pendiente; la autorización excepcional de fase 01 no cambia ese estado. [Índice](README.md).
 
 **Fuente:** [usuarios y espacios](../specification/02-usuarios-y-espacios.md) y [seguridad](../specification/06-arquitectura-y-seguridad.md). **Cobertura:** V01–V03 y V15.
 
@@ -63,12 +63,20 @@ Las rutas, métodos y nombres definitivos se documentan al implementar; esta tab
 
 - [x] Migración ejecutable, operaciones documentadas y pantallas conectadas a BoxLang con persistencia real.
 - [x] Comprobaciones de roles/sesiones con DB/API real y evidencia browser ES/EN, teclado, dos espacios y revocación.
-- [x] P01.1–P01.7 pasan localmente. El informe Task 1 registra commit, comandos, entorno, resultados y límites; falta aprobación independiente antes de cambiar el estado de fase.
+- [x] P01.1–P01.7 pasan localmente según el informe Task 1 aprobado; Sol aceptó esos resultados sin repetir suites. La Ronda 1 de navegador fue aprobada: logout HTTP 200 en otra pestaña; creación desde pantalla obsoleta recibe 401; panel/espacios/miembros desaparecen, aparece login con aviso, no se crea el espacio y se elimina la cuenta sintética.
+- [x] Cierre autorizado por Sol (2026-10-11): commit revisado `46d9cd31f78392f34e200791d7c4c3c5d409f214`; R1 cerrado. El wiring de `APP_ORIGIN` ahora deriva del puerto frontend (`3000` por defecto), conserva prioridad para valor explícito y se comprobó `3002` en el worktree. Ver [registro de cierre](#registro-de-cierre).
 
 ## Operaciones entregadas
 
 Las rutas same-origin, métodos, estados, cookies y límites de seguridad se detallan en el [README](../../README.md). El migrador se ejecuta con `docker compose -p second-brain-phase01 exec boxlang boxlang backend/migrations/migrate.bxs`; reejecutarlo informa `Migration 1 already applied`. El servicio HTTP de BoxLang vive en `backend/api/account.bxm`; el transporte Next.js es allowlist fija y no contiene autorización de negocio.
 
 Decisiones exactas: PBKDF2-HMAC-SHA256, 600.000 iteraciones, salt 16 bytes y output 32; sesión 32 bytes aleatorios, solo hash SHA-256 persistido, 12 horas; cookie HttpOnly/SameSite=Lax/Path=/, Secure para `APP_ORIGIN` HTTPS y excepción HTTP limitada a loopback; Origin exacto y CSRF para mutaciones; 10 intentos por correo en ventana persistida de 15 minutos. Sin email, recuperación, invitaciones ni llamadas de IA.
+
+## Registro de cierre
+
+- Base revisada: `46d9cd31f78392f34e200791d7c4c3c5d409f214`; BoxLang 1.18.0, bx-ai 3.5.0, Compose aislado `second-brain-phase01`.
+- Aprobación independiente: Sol, [re-revisión R1](../../.superpowers/sdd/01-cuentas-espacios-y-permisos/sol-rereview-1.md), 2026-10-11. Aprobó calidad/gate, cerró R1 y autorizó **Verificada**; aceptó los resultados P01.1–P01.7 y la evidencia de navegador descrita arriba. No se repitieron las pruebas de navegador ni las suites.
+- Cambios acotados de cierre: `APP_ORIGIN` deriva de `FRONTEND_PORT` y admite override explícito; README/.env.example alineados. Comprobaciones de este cierre: `docker compose config` filtrado solo a `APP_ORIGIN` dio `http://127.0.0.1:3002` con `FRONTEND_PORT=3002` y respetó `https://brain.example.test` explícito; `docker compose -p second-brain-phase01 exec -T boxlang boxlang tests/smoke.bxs` → OK; `tests/provider-validation.bxs` → OK; `git diff --check` → OK.
+- El probe proveedor es evidencia aparte, no requisito de autenticación ni de este gate. Consulte [evidencia P00](evidence/provider-phase00.md): llamadas reales válidas, roundtrip pgvector fallido. Fase 00 sigue bloqueada; el avance excepcional de fase 01 no valida P00 ni hostname/TLS.
 
 **No se incluye:** verificación/recuperación por email, registro público en internet ni acceso administrativo a chats privados. **Siguiente:** [fase 02](02-biblioteca-tareas-y-presupuesto.md).
