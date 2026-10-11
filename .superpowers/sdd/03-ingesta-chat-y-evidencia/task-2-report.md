@@ -93,3 +93,19 @@ Exact verification:
 | `git diff --check` | Passed; no output. |
 
 `tests/knowledge-http-p03.sh` was not rerun because the HTTP adapter was not changed in this fix round. No paid calls were made.
+
+## Fix round 2 — upgrade legacy pending rows
+
+- Commit: `80ca4914331e9ac6ee0a14879978c318a851a286` — Invalidate legacy turn tokens during lease migration.
+- Migration 5 now clears every pre-lease `pending_token` and increments `state_version` before adding the token/expiry check. This both upgrades the orphaned-token case and fences any old worker that returns after migration.
+- Added `tests/conversation-migration-v5.bxs`. In one transaction it creates a temporary v4-shaped `conversations` table (`ON COMMIT DROP`), inserts a legacy pending token, executes the actual migration 5 SQL, verifies the token was cleared and fence incremented, then verifies a new live lease can be reserved. The temporary relation shadows the real table; the test changes no persistent data.
+
+Exact verification:
+
+| Command | Output |
+|---|---|
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T boxlang boxlang backend/migrations/migrate.bxs` | `Migration 1 already applied`<br>`Migration 2 already applied`<br>`Migration 3 already applied`<br>`Migration 4 already applied`<br>`Migration 5 already applied` |
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/conversation-migration-v5.bxs` | `OK: migration 5 upgrades an isolated v4 legacy pending turn; clears/bump-fences it and permits a new live lease.` |
+| `git diff --check` | Passed; no output. |
+
+The running scratch volume already had migration 5 recorded, so the upgrade regression executed the checked-in SQL against the isolated v4-shaped temporary relation instead of changing that volume's persistent schema/data. No paid calls were made.
