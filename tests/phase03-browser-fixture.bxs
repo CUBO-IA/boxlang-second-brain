@@ -1,0 +1,71 @@
+import secondBrain.AccountService;
+import secondBrain.ConversationService;
+import secondBrain.KnowledgeCore;
+import secondBrain.LibraryService;
+import secondBrain.LibraryTaskWorker;
+import secondBrain.ProviderDouble;
+
+function run() {
+	var fixtureRun = getSystemSetting("P03_BROWSER_FIXTURE_RUN", "");
+	if ( reFind("^[a-z0-9-]{1,24}$", fixtureRun) != 1 ) throw(message="Set a unique P03_BROWSER_FIXTURE_RUN slug (1-24 lowercase letters, digits or hyphens)");
+	var password = "phase03-browser-synthetic-password";
+	var accounts = new AccountService();
+	var ownerEmail = "p03-browser-#fixtureRun#-owner@example.invalid";
+	var readerEmail = "p03-browser-#fixtureRun#-reader@example.invalid";
+	var origin = getSystemSetting("APP_ORIGIN");
+	var ownerRequest = {method:"POST", body:{email:ownerEmail,password:password}, origin:origin, csrfToken:"", sessionToken:"", spaceId:""};
+	var readerRequest = {method:"POST", body:{email:readerEmail,password:password}, origin:origin, csrfToken:"", sessionToken:"", spaceId:""};
+	if ( accounts.handle("register", ownerRequest).status != 202 || accounts.handle("register", readerRequest).status != 202 ) throw(message="Browser fixture account registration failed; use a new fixture run slug");
+	var ownerLogin = accounts.handle("login", ownerRequest);
+	var readerLogin = accounts.handle("login", readerRequest);
+	if ( ownerLogin.status != 200 || readerLogin.status != 200 ) throw(message="Browser fixture account login failed");
+	ownerRequest.sessionToken = listFirst(listLast(listFirst(ownerLogin.setCookie, ";"), "="), ";");
+	readerRequest.sessionToken = listFirst(listLast(listFirst(readerLogin.setCookie, ";"), "="), ";");
+	ownerRequest.csrfToken = ownerLogin.body.csrfToken;
+	readerRequest.csrfToken = readerLogin.body.csrfToken;
+	ownerRequest.body = {name:"Phase 03 browser #fixtureRun#"};
+	var createdSpace = accounts.handle("createSpace", ownerRequest);
+	if ( createdSpace.status != 201 ) throw(message="Browser fixture space creation failed");
+	var spaceId = toString(createdSpace.body.space.id);
+	ownerRequest.spaceId = spaceId;
+	ownerRequest.body = {email:readerEmail,role:"reader"};
+	if ( accounts.handle("addMember", ownerRequest).status != 200 ) throw(message="Browser fixture reader membership failed");
+	readerRequest.spaceId = spaceId;
+
+	var provider = new secondBrain.ProviderDouble();
+	var core = new KnowledgeCore(provider);
+	var library = new LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId));
+	var worker = new LibraryTaskWorker(provider, library);
+	var text = "Approval requires a written sign-off from the compliance director.\nThe archive keeps the signed approval for seven years.\n";
+	var note = library.createNote(ownerRequest, "Browser evidence note", text, "browser-note-#fixtureRun#");
+	var indexed = worker.processOne(note.taskId);
+	if ( indexed.status != "completed" ) throw(message="Browser fixture note indexing failed: #jsonSerialize(indexed)#");
+
+	var conversations = new ConversationService(core);
+	var conversation = conversations.create(ownerRequest, spaceId);
+	var answer = conversations.sendMessage(ownerRequest, conversation.id, "Who approves the request?", {mode:"documents",documentIds:[note.documentId]});
+	if ( answer.assistantMessage.abstained || !answer.assistantMessage.claims.len() || !answer.assistantMessage.citations.len() ) throw(message="Browser fixture did not create a deterministic citation");
+	conversations.setShared(ownerRequest, conversation.id, true);
+	var repeatedText = "La frase repetida es «café 🧠»." & char(10) & repeatString("Archivo neutral de política pública. ", 55) & char(10) & "La frase repetida es «café 🧠». Código de cola: UNIQUETAIL847.";
+	var revised = library.updateNote(ownerRequest, note.documentId, "Browser evidence note", repeatedText, "browser-repeat-#fixtureRun#");
+	if ( worker.processOne(revised.taskId).status != "completed" ) throw(message="Browser repeated Unicode note update failed");
+	var repeatedConversation = conversations.create(ownerRequest, spaceId);
+	var repeatedAnswer = conversations.sendMessage(ownerRequest, repeatedConversation.id, "What repeated phrase is associated with tail marker UNIQUETAIL847?", {mode:"documents",documentIds:[note.documentId]});
+	if ( repeatedAnswer.assistantMessage.abstained || !repeatedAnswer.assistantMessage.citations.len() ) throw(message="Browser repeated Unicode citation was not generated");
+	var repeatedCitation = repeatedAnswer.assistantMessage.citations[1];
+	if ( repeatedCitation.documentId != note.documentId || repeatedCitation.revisionId != revised.versionId || repeatedCitation.location.startOffset <= 0 || repeatedCitation.location.endOffset <= repeatedCitation.location.startOffset ) throw(message="Browser repeated Unicode citation did not retain its exact later-fragment offsets");
+	conversations.setShared(ownerRequest, repeatedConversation.id, true);
+	println(jsonSerialize({
+		status:"OK: synthetic indexed note, historical replaced citation, repeated Unicode exact-offset citation and shared conversations created; no network provider calls.",
+		run:fixtureRun,
+		space:"Phase 03 browser #fixtureRun#",
+		documentId:note.documentId,
+		conversationId:repeatedConversation.id,
+		historicalConversationId:conversation.id,
+		revisionId:revised.versionId,
+		owner:{email:ownerEmail,password:password},
+		reader:{email:readerEmail,password:password}
+	}));
+}
+
+run();

@@ -2,7 +2,7 @@ class {
     this.version = "0.1.0";
     this.mapping = "secondBrain";
     this.author = "Out of the Box";
-    this.description = "Base de Second Brain, sin funcionalidad de negocio todavía.";
+    this.description = "Second Brain knowledge core: accounts plus Role B budget and retrieval.";
     this.dependencies = [ "bxai", "postgresql" ];
 
     function configure() {

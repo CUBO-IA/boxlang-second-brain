@@ -1,0 +1,24 @@
+// Upgrade regression: apply migration 5 to a transaction-local v4-shaped table with a legacy pending token.
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="Use isolated Compose with P02_ISOLATED_DATABASE=YES");
+function verify(required boolean condition, required string message) { if ( !arguments.condition ) throw(message=arguments.message); }
+
+function run() {
+var legacyId = lCase(createUUID());
+var legacyToken = lCase(createUUID());
+var renewedToken = lCase(createUUID());
+var migration = fileRead("../backend/migrations/005_conversation_turn_lease.sql");
+transaction {
+	queryExecute("CREATE TEMP TABLE conversations (id UUID PRIMARY KEY, pending_token UUID, state_version BIGINT NOT NULL DEFAULT 0) ON COMMIT DROP");
+	queryExecute("INSERT INTO conversations (id, pending_token, state_version) VALUES (CAST(? AS UUID), CAST(? AS UUID), 9)", [legacyId, legacyToken]);
+	for ( var statement in listToArray(migration, ";") ) if ( len(trim(statement)) ) queryExecute(statement);
+	var upgraded = queryExecute("SELECT pending_token::TEXT AS token, pending_expires_at, state_version FROM conversations WHERE id = CAST(? AS UUID)", [legacyId], {returntype:"array"});
+	verify(upgraded.len() == 1 && !len(upgraded[1].token ?: "") && isNull(upgraded[1].pending_expires_at) && upgraded[1].state_version == 10, "Migration clears legacy orphan and invalidates its old fence");
+	queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID), pending_expires_at = clock_timestamp() + INTERVAL '5 minutes', state_version = state_version + 1 WHERE id = CAST(? AS UUID)", [renewedToken, legacyId]);
+	var recovered = queryExecute("SELECT pending_token::TEXT AS token, (pending_expires_at > clock_timestamp()) AS live, state_version FROM conversations WHERE id = CAST(? AS UUID)", [legacyId], {returntype:"array"});
+	verify(recovered[1].token == renewedToken && recovered[1].live && recovered[1].state_version == 11, "A new fenced turn can reserve the migrated row");
+}
+
+println("OK: migration 5 upgrades an isolated v4 legacy pending turn; clears/bump-fences it and permits a new live lease.");
+}
+
+run();

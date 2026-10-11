@@ -1,0 +1,91 @@
+/**
+ * Role B — 03.2 chunking with source locations computed from content.
+ * Defaults from phase 00 local proposal: 8000 code points, 400 overlap, max 500 fragments.
+ */
+class {
+	property name="maxCodePoints" type="numeric" default=8000;
+	property name="overlapCodePoints" type="numeric" default=400;
+	property name="maxFragments" type="numeric" default=500;
+
+	function init(numeric maxCodePoints=8000, numeric overlapCodePoints=400, numeric maxFragments=500) {
+		if ( arguments.maxCodePoints < 1 || arguments.overlapCodePoints < 0 || arguments.overlapCodePoints >= arguments.maxCodePoints ) {
+			throw( message="Invalid chunker sizes" );
+		}
+		variables.maxCodePoints = arguments.maxCodePoints;
+		variables.overlapCodePoints = arguments.overlapCodePoints;
+		variables.maxFragments = arguments.maxFragments;
+		return this;
+	}
+
+	private numeric function codePointLen(required string text) {
+		return createObject("java", "java.lang.String").init(arguments.text).codePointCount(0, len(arguments.text));
+	}
+
+	private string function substringCodePoints(required string text, required numeric startExclusive, required numeric count) {
+		var javaString = createObject("java", "java.lang.String").init(arguments.text);
+		var startIndex = javaString.offsetByCodePoints(0, arguments.startExclusive);
+		var endIndex = javaString.offsetByCodePoints(startIndex, min(arguments.count, javaString.codePointCount(startIndex, javaString.length())));
+		return javaString.substring(startIndex, endIndex);
+	}
+
+	private struct function locationForSlice(required array lines, required numeric startOffset, required numeric endOffset, any heartbeat="") {
+		var startLine = arguments.lines.len();
+		var endLine = startLine;
+		var cursor = 0;
+		for ( var i = 1; i <= arguments.lines.len(); i++ ) {
+			if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
+			var row = arguments.lines[i];
+			var lineEnd = cursor + codePointLen(row.text);
+			if ( arguments.startOffset <= lineEnd && startLine == arguments.lines.len() ) startLine = row.line;
+			if ( arguments.endOffset > arguments.startOffset && arguments.endOffset - 1 <= lineEnd && endLine == arguments.lines.len() ) endLine = row.line;
+			cursor = lineEnd + 1;
+		}
+		if ( endLine < startLine ) endLine = startLine;
+		return {
+			kind: "lines",
+			lineStart: startLine,
+			lineEnd: endLine,
+			fragmentId: "L" & numberFormat(startLine, "000000") & "-L" & numberFormat(endLine, "000000"),
+			// Zero-based Unicode code-point range, end-exclusive, into normalized source content.
+			startOffset: arguments.startOffset,
+			endOffset: arguments.endOffset
+		};
+	}
+
+	array function chunkExtracted(required struct extracted, any heartbeat="") {
+		var text = arguments.extracted.text ?: "";
+		var lines = arguments.extracted.lines ?: [];
+		var total = codePointLen(text);
+		if ( total == 0 ) {
+			return [ {
+				fragmentIndex: 1,
+				text: "",
+				location: { kind: "lines", lineStart: 1, lineEnd: 1, fragmentId: "L000001-L000001", startOffset: 0, endOffset: 0 },
+				spaceId: arguments.extracted.spaceId,
+				documentId: arguments.extracted.documentId,
+				revisionId: arguments.extracted.revisionId
+			} ];
+		}
+		var fragments = [];
+		var offset = 0;
+		var index = 1;
+		while ( offset < total ) {
+			if ( isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
+			if ( index > variables.maxFragments ) throw( message="Document exceeds #variables.maxFragments# fragments" );
+			var slice = substringCodePoints(text, offset, variables.maxCodePoints);
+			var location = locationForSlice(lines, offset, min(offset + variables.maxCodePoints, total), arguments.heartbeat);
+			fragments.append({
+				fragmentIndex: index,
+				text: slice,
+				location: location,
+				spaceId: arguments.extracted.spaceId,
+				documentId: arguments.extracted.documentId,
+				revisionId: arguments.extracted.revisionId
+			});
+			if ( offset + variables.maxCodePoints >= total ) break;
+			offset = offset + variables.maxCodePoints - variables.overlapCodePoints;
+			index++;
+		}
+		return fragments;
+	}
+}

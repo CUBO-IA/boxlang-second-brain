@@ -1,0 +1,134 @@
+import assert from "node:assert/strict";
+
+const run = process.env.P03_BROWSER_FIXTURE_RUN;
+assert.match(run ?? "", /^[a-z0-9-]{1,24}$/);
+const base = process.env.P03_FRONTEND_URL ?? "http://127.0.0.1:3005";
+const origin = process.env.P03_ORIGIN ?? base;
+const password = "phase03-browser-synthetic-password";
+
+async function request(path, session, { method = "GET", body, raw = false, csrf = session?.csrf, requestOrigin = origin } = {}) {
+  const headers = new Headers({ origin: requestOrigin });
+  if (session) headers.set("cookie", `tracking=ignored; ${session.cookie}; other=ignored`);
+  if (csrf) headers.set("x-csrf-token", csrf);
+  if (body !== undefined) headers.set("content-type", "application/json");
+  const response = await fetch(new URL(path, base), {
+    method,
+    headers,
+    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
+  });
+  const payload = await response.json();
+  assert.doesNotMatch(JSON.stringify(payload), /\/data\/|\/modules\/|leaseToken|password_hash|POSTGRES_PASSWORD/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  return { status: response.status, body: payload, headers: response.headers };
+}
+
+function assertErrorEnvelope(response, status) {
+  assert.equal(response.status, status);
+  assert.deepEqual(Object.keys(response.body).sort(), ["category", "errorCategory", "message"]);
+  assert.equal(response.body.message, "No se pudo completar la operación.");
+}
+
+async function login(role) {
+  const response = await request("/api/auth/login", null, {
+    method: "POST",
+    body: { email: `p03-browser-${run}-${role}@example.invalid`, password },
+  });
+  assert.equal(response.status, 200);
+  const setCookie = response.headers.get("set-cookie");
+  assert.match(setCookie ?? "", /^sb_session=/);
+  return { cookie: setCookie.split(";")[0], csrf: response.body.csrfToken };
+}
+
+const owner = await login("owner");
+const reader = await login("reader");
+const spaces = (await request("/api/spaces", owner)).body.spaces;
+const space = spaces.find((item) => item.name === `Phase 03 browser ${run}`);
+assert.ok(space, "fixture space is visible through the proxy");
+const docsPath = `/api/spaces/${space.id}/documents`;
+const documents = (await request(docsPath, owner)).body.documents;
+const note = documents.find((item) => item.source === "note" && item.name === "Browser evidence note");
+assert.ok(note, "fixture note is visible as a note");
+
+const sourceResult = await request(`${docsPath}/${note.id}/source`, owner);
+assert.equal(sourceResult.status, 200);
+assert.equal(sourceResult.body.source.kind, "note");
+assert.equal(sourceResult.body.source.revisionId, note.version);
+assert.ok(sourceResult.body.source.lines.length > 0);
+assertErrorEnvelope(await request(`${docsPath}/${note.id}/source`), 401);
+assertErrorEnvelope(await request(`${docsPath}/not-a-uuid/source`, owner), 404);
+assertErrorEnvelope(await request(`${docsPath}/${note.id}/source`, owner, { method: "POST", body: {} }), 405);
+assertErrorEnvelope(await request(docsPath, owner, { method: "POST", body: {} }), 415);
+
+const list = await request(`/api/spaces/${space.id}/conversations?offset=0&limit=50`, owner);
+assert.equal(list.status, 200);
+let conversation;
+let history;
+let answer;
+for (const item of list.body.conversations.filter((value) => value.shared && value.canContinue)) {
+  const candidate = await request(`/api/conversations/${item.id}?afterSequence=0&limit=100`, owner);
+  assert.equal(candidate.status, 200);
+  const candidateAnswer = candidate.body.messages.find((message) => message.role === "assistant");
+  if (candidateAnswer?.citations?.some((citation) => citation.documentId === note.id && citation.status === "current")) {
+    conversation = item;
+    history = candidate;
+    answer = candidateAnswer;
+    break;
+  }
+}
+assert.ok(conversation, "shared current-citation author conversation is listed");
+assert.ok(answer?.claims?.length && answer.citations?.length, "fixture includes validated claims and persisted citations");
+assert.equal(answer.claims[0].citationIds[0], answer.citations[0].id);
+
+const citation = await request(`/api/conversations/${conversation.id}/messages/${answer.id}/citations/${answer.citations[0].id}`, owner);
+assert.equal(citation.status, 200);
+assert.equal(citation.body.citation.status, "current");
+assert.equal(citation.body.source.revisionId, note.version);
+assert.equal(typeof citation.body.citation.location.startOffset, "number");
+assert.equal(typeof citation.body.citation.location.endOffset, "number");
+const codePoints = [...citation.body.source.content];
+assert.equal(codePoints.slice(citation.body.citation.location.startOffset, citation.body.citation.location.endOffset).join("").startsWith(citation.body.citation.excerpt), true);
+assert.equal(citation.body.source.content.match(/«café 🧠»/gu)?.length, 2, "fixture repeats the same Unicode phrase");
+assert.ok(citation.body.citation.location.startOffset > 0, "citation must select a later repeated-phrase fragment by stored offsets");
+
+const readerHistory = await request(`/api/conversations/${conversation.id}`, reader);
+assert.equal(readerHistory.status, 200);
+assert.equal((await request(`/api/conversations/${conversation.id}/messages`, reader, {
+  method: "POST",
+  body: { question: "must stay read-only", scope: { mode: "space" } },
+})).status, 404);
+
+const emptySelection = await request(`/api/conversations/${conversation.id}/messages`, owner, {
+  method: "POST",
+  body: { question: "empty selections never widen", scope: { mode: "documents", documentIds: [] } },
+});
+assert.equal(emptySelection.status, 400);
+
+const oversizedChat = await request(`/api/conversations/${conversation.id}/messages`, owner, {
+  method: "POST",
+  body: JSON.stringify({ question: "q".repeat(32_769), scope: { mode: "space" } }),
+  raw: true,
+});
+assertErrorEnvelope(oversizedChat, 413);
+assert.equal(oversizedChat.body.category, "limit");
+
+const oversizedNote = await request(`/api/spaces/${space.id}/notes`, owner, {
+  method: "POST",
+  body: JSON.stringify({ title: "oversized", body: "n".repeat(1_100_001), operationKey: `cap-${run}` }),
+  raw: true,
+});
+assertErrorEnvelope(oversizedNote, 413);
+assert.equal(oversizedNote.body.category, "limit");
+
+assertErrorEnvelope(await request(`/api/spaces/${space.id}/notes`, owner, {
+  method: "POST",
+  body: { title: "csrf check", body: "no write", operationKey: `csrf-${run}` },
+  csrf: "wrong",
+}), 403);
+assertErrorEnvelope(await request(`/api/spaces/${space.id}/notes`, owner, {
+  method: "POST",
+  body: { title: "origin check", body: "no write", operationKey: `origin-${run}` },
+  requestOrigin: "https://invalid.example",
+}), 403);
+
+console.log("OK: real Next → BoxLang proxy operations, cookie-only auth, no-store, strict IDs/methods, uniform local/BoxLang error envelopes, source and citation revision/offset forwarding, shared read-only permission, CSRF/Origin, empty scope, and exact 32,768/1,100,000-byte caps; no provider calls.");

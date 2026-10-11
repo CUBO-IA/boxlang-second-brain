@@ -139,7 +139,7 @@ class {
 		return { allowed: true };
 	}
 
-	private struct function requireMutation(required struct request) {
+	struct function requireMutation(required struct request) {
 		var originCheck = requireOrigin(arguments.request);
 		if ( !originCheck.allowed ) return originCheck;
 		if ( !structKeyExists(arguments.request, "sessionToken") || !validToken(arguments.request.sessionToken) ) {

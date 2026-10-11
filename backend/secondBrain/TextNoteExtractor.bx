@@ -1,0 +1,44 @@
+/**
+ * Role B — 03.1 notes/TXT extraction with stable line identifiers.
+ * Locations are derived from content; never requested from a model.
+ */
+class {
+	struct function normalizeText(required string raw) {
+		var text = replace(arguments.raw, char(13) & char(10), char(10), "all");
+		text = replace(text, char(13), char(10), "all");
+		if ( left(text, 1) == char(65279) ) text = mid(text, 2, len(text) - 1);
+		return { text: text, encoding: "utf-8", newline: "lf" };
+	}
+
+	array function lines(required string raw, any heartbeat="") {
+		var normalized = normalizeText(arguments.raw);
+		var parts = listToArray(normalized.text, char(10), true, true);
+		if ( !len(normalized.text) ) parts = [ "" ];
+		var output = [];
+		for ( var i = 1; i <= parts.len(); i++ ) {
+			if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
+			output.append({
+				line: i,
+				fragmentId: "L" & numberFormat(i, "000000"),
+				text: parts[i]
+			});
+		}
+		return output;
+	}
+
+	struct function extract(required string raw, required string documentId, required string revisionId, required string spaceId, string kind="txt", any heartbeat="") {
+		var normalized = normalizeText(arguments.raw);
+		var lineRows = lines(arguments.raw, arguments.heartbeat);
+		return {
+			spaceId: arguments.spaceId,
+			documentId: arguments.documentId,
+			revisionId: arguments.revisionId,
+			kind: arguments.kind,
+			encoding: normalized.encoding,
+			newline: normalized.newline,
+			text: normalized.text,
+			lines: lineRows,
+			lineCount: lineRows.len()
+		};
+	}
+}

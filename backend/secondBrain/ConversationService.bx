@@ -1,0 +1,392 @@
+/** Persistent private-by-default conversations; no HTTP objects or provider doubles are created here. */
+class {
+	function init(any knowledgeCore="") {
+		variables.accounts = new secondBrain.AccountService();
+		variables.library = new secondBrain.LibraryService();
+		variables.core = arguments.knowledgeCore;
+		return this;
+	}
+
+	private string function uuid() { return lCase(createObject("java", "java.util.UUID").randomUUID().toString()); }
+	private boolean function isText(required any value) { return isInstanceOf(arguments.value, "java.lang.String"); }
+	private boolean function validUuid(required any value) { return isText(arguments.value) && reFindNoCase("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$", arguments.value) == 1; }
+	private numeric function bytes(required string value) { return arguments.value.getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length; }
+	private void function reject(required numeric status, required string category) { throw(type="SecondBrain.Conversation", message=arguments.category, errorCode=toString(arguments.status)); }
+	private boolean function hasOnly(required struct value, required array keys) {
+		for ( var key in structKeyArray(arguments.value) ) {
+			var found = false;
+			for ( var allowed in arguments.keys ) if ( compareNoCase(key, allowed) == 0 ) found = true;
+			if ( !found ) return false;
+		}
+		return true;
+	}
+	private numeric function queryInteger(required any value) {
+		if ( !isText(arguments.value) || reFind("^[0-9]+$", arguments.value) != 1 ) reject(400, "invalid_input");
+		return val(arguments.value);
+	}
+	private struct function safeError(required any error) {
+		if ( arguments.error.type == "SecondBrain.Library" ) return variables.library.safeError(arguments.error);
+		if ( arguments.error.type == "SecondBrain.Conversation" ) {
+			var status = val(arguments.error.errorCode);
+			var category = arguments.error.message;
+			return { status: status, body: { errorCategory: category, category: listFind("invalid_input,invalid_scope,invalid_id", category) ? "invalid_input" : (listFind("permission,origin_csrf", category) ? "permission" : (listFind("not_found", category) ? "not_found" : (listFind("turn_busy,fence_changed,source_changed", category) ? "conflict" : (listFind("provider,budget,storage", category) ? category : "unknown")))), message: "No se pudo completar la operación." } };
+		}
+		return { status: 500, body: { errorCategory: "internal", category: "unknown", message: "No se pudo completar la operación." } };
+	}
+
+	private struct function liveAccess(required struct request, required string spaceId) {
+		var result = variables.accounts.authorize(arguments.request.sessionToken ?: "", arguments.spaceId, "read");
+		if ( !result.allowed ) reject(result.sessionValid ? 404 : 401, result.sessionValid ? "not_found" : "permission");
+		return result;
+	}
+
+	/** Short mutation fence: membership removal cannot race a write's final authorization check. */
+	private void function lockMembership(required string spaceId, required string userId) {
+		var member = queryExecute("SELECT id FROM memberships WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT) FOR KEY SHARE", [arguments.spaceId, arguments.userId], {returntype:"array"});
+		if ( !member.len() ) reject(404, "not_found");
+	}
+
+	private struct function conversationRow(required string conversationId) {
+		if ( !validUuid(arguments.conversationId) ) reject(400, "invalid_id");
+		var rows = queryExecute("SELECT id::TEXT AS id, space_id::TEXT AS space_id, author_id::TEXT AS author_id, shared, state_version, pending_token::TEXT AS pending_token, next_sequence, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD""T""HH24:MI:SS.MS""Z""') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD""T""HH24:MI:SS.MS""Z""') AS updated_at FROM conversations WHERE id = CAST(? AS UUID)", [lCase(arguments.conversationId)], {returntype:"array"});
+		if ( !rows.len() ) reject(404, "not_found");
+		return rows[1];
+	}
+
+	private struct function authorizeConversation(required struct request, required string conversationId, boolean write=false) {
+		var row = conversationRow(arguments.conversationId);
+		var access = liveAccess(arguments.request, row.space_id);
+		if ( toString(access.userId) != row.author_id && !row.shared ) reject(404, "not_found");
+		if ( arguments.write && toString(access.userId) != row.author_id ) reject(404, "not_found");
+		var scoped = duplicate(arguments.request);
+		scoped.spaceId = row.space_id;
+		return { row: row, access: access, request: scoped };
+	}
+
+	struct function create(required struct request, required string spaceId) {
+		if ( reFind("^[1-9][0-9]{0,17}$", arguments.spaceId) != 1 ) reject(400, "invalid_id");
+		var mutation = variables.accounts.requireMutation(arguments.request);
+		if ( !mutation.allowed ) reject(mutation.failure.status, mutation.failure.status == 403 ? "origin_csrf" : "permission");
+		var access = liveAccess(arguments.request, arguments.spaceId);
+		var id = uuid();
+		transaction {
+			liveAccess(arguments.request, arguments.spaceId);
+			lockMembership(arguments.spaceId, toString(access.userId));
+			queryExecute("INSERT INTO conversations (id, space_id, author_id) VALUES (CAST(? AS UUID), CAST(? AS BIGINT), CAST(? AS BIGINT))", [id, arguments.spaceId, toString(access.userId)]);
+		}
+		return { id: id, spaceId: arguments.spaceId, authorId: toString(access.userId), shared: false, canContinue: true };
+	}
+
+	struct function list(required struct request, required string spaceId, numeric offset=0, numeric limit=50) {
+		if ( reFind("^[1-9][0-9]{0,17}$", arguments.spaceId) != 1 || arguments.offset < 0 || arguments.offset > 10000 || arguments.offset != int(arguments.offset) || arguments.limit < 1 || arguments.limit > 50 || arguments.limit != int(arguments.limit) ) reject(400, "invalid_input");
+		var access = liveAccess(arguments.request, arguments.spaceId);
+		var rows = queryExecute("SELECT id::TEXT AS id, space_id::TEXT AS space_id, author_id::TEXT AS author_id, shared, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD""T""HH24:MI:SS.MS""Z""') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD""T""HH24:MI:SS.MS""Z""') AS updated_at FROM conversations WHERE space_id = CAST(? AS BIGINT) AND (author_id = CAST(? AS BIGINT) OR shared = TRUE) ORDER BY updated_at DESC, id DESC OFFSET CAST(? AS INTEGER) LIMIT CAST(? AS INTEGER)", [arguments.spaceId, toString(access.userId), arguments.offset, arguments.limit + 1], {returntype:"array"});
+		var hasMore = rows.len() > arguments.limit;
+		if ( hasMore ) rows.pop();
+		var items = [];
+		for ( var row in rows ) items.append(conversationValue(row, toString(access.userId)));
+		return { conversations: items, offset: arguments.offset, limit: arguments.limit, hasMore: hasMore };
+	}
+
+	private struct function conversationValue(required struct row, required string userId) {
+		return {id: arguments.row.id, spaceId: arguments.row.space_id, authorId: arguments.row.author_id, shared: arguments.row.shared, canContinue: arguments.row.author_id == arguments.userId, createdAt: arguments.row.created_at, updatedAt: arguments.row.updated_at};
+	}
+
+	private string function citationStatus(required string spaceId, required string documentId, required string revisionId, required string fragmentId) {
+		var rows = queryExecute("SELECT d.space_id::TEXT AS space_id, d.deleted_at IS NOT NULL AS deleted, COALESCE(d.current_version::TEXT, '') AS current_version, COALESCE(v.storage_state, '') AS storage_state, EXISTS (SELECT 1 FROM knowledge_fragments f WHERE f.id = ? AND f.document_id = d.id::TEXT AND f.revision_id = v.id::TEXT AND f.published = TRUE) AS fragment_current FROM documents d LEFT JOIN document_versions v ON v.id = d.current_version AND v.document_id = d.id WHERE d.id = CAST(? AS UUID)", [arguments.fragmentId, arguments.documentId], {returntype:"array"});
+		if ( !rows.len() ) return "deleted";
+		if ( rows[1].space_id != arguments.spaceId ) return "inaccessible";
+		if ( rows[1].deleted ) return "deleted";
+		if ( rows[1].current_version != arguments.revisionId ) return "replaced";
+		if ( rows[1].storage_state != "ready" ) return "inaccessible";
+		if ( !rows[1].fragment_current ) return "inaccessible";
+		return "current";
+	}
+
+	private struct function citationValue(required struct row, required string spaceId) {
+		return {id: arguments.row.id, documentId: arguments.row.document_id, revisionId: arguments.row.revision_id, fragmentId: arguments.row.fragment_id, title: arguments.row.source_title, provenance: jsonDeserialize(arguments.row.provenance_json), location: jsonDeserialize(arguments.row.location_json), excerpt: arguments.row.excerpt, claimIndex: arguments.row.claim_index, status: citationStatus(arguments.spaceId, arguments.row.document_id, arguments.row.revision_id, arguments.row.fragment_id)};
+	}
+
+	struct function read(required struct request, required string conversationId, numeric afterSequence=0, numeric limit=100) {
+		if ( arguments.afterSequence < 0 || arguments.afterSequence != int(arguments.afterSequence) || arguments.limit < 1 || arguments.limit > 100 || arguments.limit != int(arguments.limit) ) reject(400, "invalid_input");
+		var auth = authorizeConversation(arguments.request, arguments.conversationId);
+		var rows = queryExecute("SELECT id::TEXT AS id, sequence, role, content, payload::TEXT AS payload_json, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD""T""HH24:MI:SS.MS""Z""') AS created_at FROM conversation_messages WHERE conversation_id = CAST(? AS UUID) AND sequence > CAST(? AS BIGINT) ORDER BY sequence LIMIT CAST(? AS INTEGER)", [arguments.conversationId, arguments.afterSequence, arguments.limit + 1], {returntype:"array"});
+		var hasMore = rows.len() > arguments.limit;
+		if ( hasMore ) rows.pop();
+		var messages = [];
+		var nextAfter = arguments.afterSequence;
+		for ( var row in rows ) {
+			var payload = jsonDeserialize(row.payload_json);
+			var message = {id: row.id, sequence: row.sequence, role: row.role, content: row.content, createdAt: row.created_at};
+			if ( row.role == "user" ) message.scope = payload.scope;
+			else {
+				message.abstained = payload.abstained ?: false;
+				if ( structKeyExists(payload, "reason") ) message.reason = payload.reason;
+				message.claims = payload.claims ?: [];
+				var citationRows = queryExecute("SELECT id::TEXT AS id, claim_index, document_id::TEXT AS document_id, revision_id::TEXT AS revision_id, fragment_id, source_title, provenance::TEXT AS provenance_json, location::TEXT AS location_json, excerpt FROM conversation_citations WHERE message_id = CAST(? AS UUID) ORDER BY claim_index, citation_key", [row.id], {returntype:"array"});
+				var citations = [];
+				for ( var citationRow in citationRows ) citations.append(citationValue(citationRow, auth.row.space_id));
+				message.citations = citations;
+			}
+			messages.append(message);
+			nextAfter = row.sequence;
+		}
+		return {conversation: conversationValue(auth.row, toString(auth.access.userId)), messages: messages, nextAfter: nextAfter, hasMore: hasMore};
+	}
+
+	struct function setShared(required struct request, required string conversationId, required boolean shared) {
+		var mutation = variables.accounts.requireMutation(arguments.request);
+		if ( !mutation.allowed ) reject(mutation.failure.status, mutation.failure.status == 403 ? "origin_csrf" : "permission");
+		var auth = authorizeConversation(arguments.request, arguments.conversationId, true);
+		transaction {
+			var row = queryExecute("SELECT shared FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId]);
+			if ( !row.recordCount ) reject(404, "not_found");
+			liveAccess(auth.request, auth.row.space_id);
+			lockMembership(auth.row.space_id, toString(auth.access.userId));
+			if ( row.shared[1] != arguments.shared ) queryExecute("UPDATE conversations SET shared = CAST(? AS BOOLEAN), pending_token = NULL, pending_expires_at = NULL, state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [arguments.shared, arguments.conversationId]);
+		}
+		return {id: arguments.conversationId, shared: arguments.shared};
+	}
+
+	private array function currentDocuments(required string spaceId) {
+		return queryExecute("SELECT d.id::TEXT AS id, d.current_version::TEXT AS revision_id FROM documents d JOIN document_versions v ON v.id = d.current_version AND v.document_id = d.id JOIN document_tasks t ON t.version_id = v.id AND t.document_id = d.id JOIN knowledge_documents kd ON kd.id = d.id::TEXT AND kd.revision_id = v.id::TEXT AND kd.status = 'indexed' WHERE d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND v.storage_state = 'ready' AND t.state = 'completed' AND EXISTS (SELECT 1 FROM knowledge_fragments f WHERE f.document_id = d.id::TEXT AND f.revision_id = v.id::TEXT AND f.published = TRUE) ORDER BY d.id LIMIT 1001", [arguments.spaceId], {returntype:"array"});
+	}
+
+	private struct function resolveScope(required struct scope, required string spaceId) {
+		if ( !isStruct(arguments.scope) || !structKeyExists(arguments.scope, "mode") || !isText(arguments.scope.mode) ) reject(400, "invalid_scope");
+		var docs = currentDocuments(arguments.spaceId);
+		if ( arguments.scope.mode == "space" ) {
+			if ( !hasOnly(arguments.scope, ["mode"]) || docs.len() > 1000 ) reject(400, "invalid_scope");
+			var allIds = [];
+			for ( var doc in docs ) allIds.append(doc.id);
+			return {mode:"space", documentIds:allIds, revisions:revisionMap(docs)};
+		}
+		if ( arguments.scope.mode != "documents" || !hasOnly(arguments.scope, ["mode", "documentIds"]) || !structKeyExists(arguments.scope, "documentIds") || !isArray(arguments.scope.documentIds) || !arguments.scope.documentIds.len() || arguments.scope.documentIds.len() > 100 ) reject(400, "invalid_scope");
+		var selected = [];
+		var seen = {};
+		for ( var id in arguments.scope.documentIds ) {
+			if ( !validUuid(id) ) reject(400, "invalid_scope");
+			id = lCase(id);
+			if ( structKeyExists(seen, id) ) reject(400, "invalid_scope");
+			seen[id] = true;
+			selected.append(id);
+		}
+		var available = revisionMap(docs);
+		for ( var selectedId in selected ) if ( !structKeyExists(available, selectedId) ) reject(400, "invalid_scope");
+		var revisions = {};
+		for ( var selectedId in selected ) revisions[selectedId] = available[selectedId];
+		return {mode:"documents", documentIds:selected, revisions:revisions};
+	}
+
+	private struct function revisionMap(required array docs) {
+		var result = {};
+		for ( var doc in arguments.docs ) result[doc.id] = doc.revision_id;
+		return result;
+	}
+
+	private array function safeHistory(required string conversationId) {
+		var rows = queryExecute("SELECT content FROM conversation_messages WHERE conversation_id = CAST(? AS UUID) AND role = 'user' ORDER BY sequence DESC LIMIT 6", [arguments.conversationId], {returntype:"array"});
+		var output = [];
+		var total = 0;
+		for ( var row in rows ) {
+			var size = bytes(row.content);
+			if ( total + size > 4096 ) break;
+			output.insertAt(1, row.content);
+			total += size;
+		}
+		return output;
+	}
+
+	/** Expire only a lease whose database-clock deadline passed while holding the conversation row lock. */
+	private boolean function recoverExpiredTurn(required string conversationId) {
+		if ( !validUuid(arguments.conversationId) ) reject(400, "invalid_id");
+		var recovered = false;
+		transaction {
+			var expired = queryExecute("SELECT pending_token::TEXT AS token FROM conversations WHERE id = CAST(? AS UUID) AND pending_token IS NOT NULL AND pending_expires_at <= clock_timestamp() FOR UPDATE", [arguments.conversationId], {returntype:"array"});
+			if ( expired.len() ) {
+				queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL, state_version = state_version + 1 WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID) AND pending_expires_at <= clock_timestamp()", [arguments.conversationId, expired[1].token]);
+				recovered = true;
+			}
+		}
+		return recovered;
+	}
+
+	private void function release(required string conversationId, required string token) {
+		queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID)", [arguments.conversationId, arguments.token]);
+	}
+
+	private void function assertCurrent(required string spaceId, required struct revisions) {
+		for ( var docId in structKeyArray(arguments.revisions) ) {
+			var now = queryExecute("SELECT d.current_version::TEXT AS revision_id FROM documents d JOIN document_versions v ON v.id = d.current_version AND v.document_id = d.id JOIN document_tasks t ON t.version_id = v.id AND t.state = 'completed' JOIN knowledge_documents kd ON kd.id = d.id::TEXT AND kd.revision_id = v.id::TEXT AND kd.status = 'indexed' WHERE d.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND v.storage_state = 'ready' AND EXISTS (SELECT 1 FROM knowledge_fragments f WHERE f.document_id = d.id::TEXT AND f.revision_id = v.id::TEXT AND f.published = TRUE) FOR SHARE OF d", [docId, arguments.spaceId], {returntype:"array"});
+			if ( !now.len() || now[1].revision_id != arguments.revisions[docId] ) reject(409, "source_changed");
+		}
+	}
+
+	private struct function currentCitation(required struct citation, required string spaceId, required struct revisions) {
+		if ( !isStruct(arguments.citation) || !isText(arguments.citation.fragmentId ?: "") || !isText(arguments.citation.documentId ?: "") || !isText(arguments.citation.revisionId ?: "") ) reject(503, "provider");
+		var docId = lCase(arguments.citation.documentId);
+		if ( !structKeyExists(arguments.revisions, docId) || arguments.revisions[docId] != arguments.citation.revisionId ) reject(503, "provider");
+		var rows = queryExecute("SELECT f.document_id::TEXT AS document_id, f.revision_id::TEXT AS revision_id, f.fragment_index, f.text, f.location::TEXT AS location_json, v.name, v.provenance::TEXT AS provenance_json FROM knowledge_fragments f JOIN documents d ON d.id::TEXT = f.document_id JOIN document_versions v ON v.id::TEXT = f.revision_id AND v.document_id = d.id WHERE f.id = ? AND f.space_id = ? AND f.document_id = ? AND f.revision_id = ? AND f.published = TRUE AND d.deleted_at IS NULL AND d.current_version::TEXT = f.revision_id AND v.storage_state = 'ready'", [arguments.citation.fragmentId, arguments.spaceId, docId, arguments.citation.revisionId], {returntype:"array"});
+		if ( !rows.len() ) reject(503, "provider");
+		return {documentId:rows[1].document_id, revisionId:rows[1].revision_id, fragmentId:arguments.citation.fragmentId, title:rows[1].name, provenance:jsonDeserialize(rows[1].provenance_json), location:jsonDeserialize(rows[1].location_json), excerpt:left(rows[1].text, 240), claimIndex:0};
+	}
+
+	private struct function validateAnswer(required struct answer, required string spaceId, required struct revisions) {
+		if ( !isStruct(arguments.answer) || !(arguments.answer.ok ?: false) || !isBoolean(arguments.answer.abstained ?: false) || !isArray(arguments.answer.claims ?: []) || !isArray(arguments.answer.citations ?: []) ) reject(503, "provider");
+		var claims = [];
+		var citations = [];
+		var byKey = {};
+		if ( arguments.answer.abstained ) {
+			if ( arguments.answer.claims.len() || arguments.answer.citations.len() ) reject(503, "provider");
+			return {abstained:true, reason:arguments.answer.reason ?: "insufficient_evidence", claims:[], citations:[], content:""};
+		}
+		if ( !isText(arguments.answer.answerText ?: "") || !arguments.answer.claims.len() || !arguments.answer.citations.len() ) reject(503, "provider");
+		for ( var i = 1; i <= arguments.answer.citations.len(); i++ ) {
+			var raw = arguments.answer.citations[i];
+			if ( !isStruct(raw) || !isText(raw.id ?: "") || structKeyExists(byKey, raw.id) ) reject(503, "provider");
+			var current = currentCitation(raw, arguments.spaceId, arguments.revisions);
+			current.key = raw.id;
+			byKey[raw.id] = current;
+			citations.append(current);
+		}
+		for ( var claimIndex = 1; claimIndex <= arguments.answer.claims.len(); claimIndex++ ) {
+			var claim = arguments.answer.claims[claimIndex];
+			if ( !isStruct(claim) || !isText(claim.text ?: "") || !len(trim(claim.text)) || !listFind("supported,inferred,uncertain", claim.label ?: "") || !isArray(claim.premises ?: []) || !isArray(claim.citationIds ?: []) || !claim.citationIds.len() ) reject(503, "provider");
+			var ids = [];
+			for ( var key in claim.citationIds ) {
+				if ( !isText(key) || !structKeyExists(byKey, key) || byKey[key].claimIndex ) reject(503, "provider");
+				byKey[key].claimIndex = claimIndex;
+				ids.append(key);
+			}
+			if ( claim.label == "inferred" && !claim.premises.len() ) reject(503, "provider");
+			if ( claim.label != "inferred" && claim.premises.len() ) reject(503, "provider");
+			claims.append({text:trim(claim.text), label:claim.label, premises:claim.label == "inferred" ? claim.premises : [], citationKeys:ids});
+		}
+		for ( var key in structKeyArray(byKey) ) if ( byKey[key].claimIndex == 0 ) reject(503, "provider");
+		return {abstained:false, claims:claims, citations:citations, content:arguments.answer.answerText};
+	}
+
+	struct function sendMessage(required struct request, required string conversationId, required any question, required any scope) {
+		if ( !isText(arguments.question) || !len(trim(arguments.question)) || bytes(arguments.question) > 4096 ) reject(400, "invalid_input");
+		var mutation = variables.accounts.requireMutation(arguments.request);
+		if ( !mutation.allowed ) reject(mutation.failure.status, mutation.failure.status == 403 ? "origin_csrf" : "permission");
+		var auth = authorizeConversation(arguments.request, arguments.conversationId, true);
+		var resolved = resolveScope(arguments.scope, auth.row.space_id);
+		if ( !resolved.documentIds.len() ) reject(400, "invalid_scope");
+		var priorQuestions = safeHistory(arguments.conversationId);
+		var token = uuid();
+		var fence = 0;
+		recoverExpiredTurn(arguments.conversationId);
+		transaction {
+			var locked = queryExecute("SELECT author_id::TEXT AS author_id, state_version, pending_token::TEXT AS pending_token, (pending_expires_at <= clock_timestamp()) AS pending_expired FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId], {returntype:"array"});
+			if ( !locked.len() || locked[1].author_id != toString(auth.access.userId) ) reject(404, "not_found");
+			if ( len(locked[1].pending_token ?: "") ) {
+				if ( !(locked[1].pending_expired ?: false) ) reject(409, "turn_busy");
+				queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL, state_version = state_version + 1 WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID) AND pending_expires_at <= clock_timestamp()", [arguments.conversationId, locked[1].pending_token]);
+				locked[1].state_version++;
+			}
+			liveAccess(auth.request, auth.row.space_id);
+			lockMembership(auth.row.space_id, toString(auth.access.userId));
+			// OpenAI calls have a 30 s timeout; five minutes leaves room for embed + chat and normal DB scheduling.
+			queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID), pending_expires_at = clock_timestamp() + INTERVAL '5 minutes', state_version = state_version + 1 WHERE id = CAST(? AS UUID)", [token, arguments.conversationId]);
+			fence = locked[1].state_version + 1;
+		}
+		try {
+			var answer;
+			try {
+				var core = isObject(variables.core) ? variables.core : new secondBrain.KnowledgeCore();
+				answer = core.ask(auth.row.space_id, resolved.documentIds, trim(arguments.question), priorQuestions);
+			} catch (any providerFailure) { reject(503, "provider"); }
+			if ( !(answer.ok ?: false) ) {
+				release(arguments.conversationId, token);
+				if ( answer.denied ?: false ) reject(429, "budget");
+				reject(503, "provider");
+			}
+			var clean = validateAnswer(answer, auth.row.space_id, resolved.revisions);
+			var userId = uuid();
+			var assistantId = uuid();
+			var userSequence = 0;
+			var claimPayload = [];
+			var citationIds = {};
+			for ( var item in clean.citations ) citationIds[item.key] = uuid();
+			for ( var safeClaim in clean.claims ) {
+				var mappedIds = [];
+				for ( var key in safeClaim.citationKeys ) mappedIds.append(citationIds[key]);
+				claimPayload.append({text:safeClaim.text, label:safeClaim.label, premises:safeClaim.premises, citationIds:mappedIds});
+			}
+			var assistantPayload = {abstained:clean.abstained, claims:claimPayload, retrievedCount:answer.retrievedCount ?: 0, usageUSD:answer.usageUSD ?: 0};
+			if ( clean.abstained ) assistantPayload.reason = clean.reason ?: "insufficient_evidence";
+			var published = false;
+			transaction {
+				var locked = queryExecute("SELECT author_id::TEXT AS author_id, space_id::TEXT AS space_id, state_version, pending_token::TEXT AS pending_token, (pending_expires_at > clock_timestamp()) AS pending_live, next_sequence FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId], {returntype:"array"});
+				if ( !locked.len() || locked[1].author_id != toString(auth.access.userId) || locked[1].state_version != fence || locked[1].pending_token != token || !(locked[1].pending_live ?: false) ) reject(409, "fence_changed");
+				liveAccess(auth.request, locked[1].space_id);
+				lockMembership(locked[1].space_id, toString(auth.access.userId));
+				assertCurrent(locked[1].space_id, resolved.revisions);
+				userSequence = locked[1].next_sequence;
+				queryExecute("INSERT INTO conversation_messages (id, conversation_id, sequence, role, content, payload) VALUES (CAST(? AS UUID), CAST(? AS UUID), CAST(? AS BIGINT), 'user', ?, CAST(? AS JSONB)), (CAST(? AS UUID), CAST(? AS UUID), CAST(? AS BIGINT), 'assistant', ?, CAST(? AS JSONB))", [userId, arguments.conversationId, userSequence, trim(arguments.question), jsonSerialize({scope:{mode:resolved.mode, documentIds:resolved.documentIds}}), assistantId, arguments.conversationId, userSequence + 1, clean.content, jsonSerialize(assistantPayload)]);
+				for ( var item in clean.citations ) {
+					queryExecute("INSERT INTO conversation_citations (id, message_id, citation_key, claim_index, document_id, revision_id, fragment_id, source_title, provenance, location, excerpt) VALUES (CAST(? AS UUID), CAST(? AS UUID), ?, CAST(? AS INTEGER), CAST(? AS UUID), CAST(? AS UUID), ?, ?, CAST(? AS JSONB), CAST(? AS JSONB), ?)", [citationIds[item.key], assistantId, item.key, item.claimIndex, item.documentId, item.revisionId, item.fragmentId, item.title, jsonSerialize(item.provenance), jsonSerialize(item.location), item.excerpt]);
+				}
+				queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL, next_sequence = next_sequence + 2, updated_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [arguments.conversationId]);
+				published = true;
+			}
+			if ( !published ) reject(409, "fence_changed");
+			var result = read(auth.request, arguments.conversationId, userSequence - 1, 2);
+			return {conversation:result.conversation, userMessage:result.messages[1], assistantMessage:result.messages[2]};
+		} catch (any failure) {
+			release(arguments.conversationId, token);
+			rethrow;
+		}
+	}
+
+	struct function resolveCitation(required struct request, required string conversationId, required string messageId, required string citationId) {
+		if ( !validUuid(arguments.messageId) || !validUuid(arguments.citationId) ) reject(400, "invalid_id");
+		var auth = authorizeConversation(arguments.request, arguments.conversationId);
+		var rows = queryExecute("SELECT c.id::TEXT AS id, c.claim_index, c.document_id::TEXT AS document_id, c.revision_id::TEXT AS revision_id, c.fragment_id, c.source_title, c.provenance::TEXT AS provenance_json, c.location::TEXT AS location_json, c.excerpt FROM conversation_citations c JOIN conversation_messages m ON m.id = c.message_id WHERE c.id = CAST(? AS UUID) AND m.id = CAST(? AS UUID) AND m.conversation_id = CAST(? AS UUID) AND m.role = 'assistant'", [lCase(arguments.citationId), lCase(arguments.messageId), arguments.conversationId], {returntype:"array"});
+		if ( !rows.len() ) reject(404, "not_found");
+		var citation = citationValue(rows[1], auth.row.space_id);
+		var result = {citation:citation};
+		if ( citation.status == "current" ) {
+			var source = variables.library.getTextContent(auth.request, citation.documentId);
+			if ( source.revisionId != citation.revisionId ) reject(409, "source_changed");
+			result.source = {documentId:source.documentId, revisionId:source.revisionId, title:source.title, kind:source.kind, content:source.content, lines:source.lines, lineCount:source.lineCount, provenance:source.provenance};
+		}
+		return result;
+	}
+
+	struct function handle(required string operation, required struct request) {
+		try {
+			var operation = arguments.operation;
+			var req = arguments.request;
+			if ( listFind("create,sendMessage,setShared", operation) ) {
+				if ( !isStruct(req.body ?: {}) ) reject(400, "invalid_input");
+			}
+			switch ( operation ) {
+				case "create":
+					if ( req.method != "POST" || !hasOnly(req.body, []) ) reject(req.method != "POST" ? 405 : 400, req.method != "POST" ? "method" : "invalid_input");
+					return {status:201, body:{conversation:create(req, req.spaceId)}};
+				case "list":
+					if ( req.method != "GET" ) reject(405, "method");
+					var offset = structKeyExists(req, "offset") ? queryInteger(req.offset) : 0;
+					var limit = structKeyExists(req, "limit") ? val(req.limit) : 50;
+					return {status:200, body:list(req, req.spaceId, offset, limit)};
+				case "read":
+					if ( req.method != "GET" ) reject(405, "method");
+					return {status:200, body:read(req, req.conversationId, structKeyExists(req,"afterSequence") ? queryInteger(req.afterSequence) : 0, structKeyExists(req,"limit") ? val(req.limit) : 100)};
+				case "sendMessage":
+					if ( req.method != "POST" || !hasOnly(req.body, ["question","scope"]) || !structKeyExists(req.body,"question") || !structKeyExists(req.body,"scope") ) reject(req.method != "POST" ? 405 : 400, req.method != "POST" ? "method" : "invalid_input");
+					var sent = sendMessage(req, req.conversationId, req.body.question, req.body.scope);
+					return {status:200, body:sent};
+				case "share":
+				case "unshare":
+					if ( req.method != "POST" || !hasOnly(req.body, []) ) reject(req.method != "POST" ? 405 : 400, req.method != "POST" ? "method" : "invalid_input");
+					return {status:200, body:{conversation:setShared(req, req.conversationId, operation == "share")}};
+				case "resolveCitation":
+					if ( req.method != "GET" ) reject(405, "method");
+					return {status:200, body:resolveCitation(req, req.conversationId, req.messageId, req.citationId)};
+				default: reject(404, "not_found");
+			}
+		} catch (any error) { return safeError(error); }
+	}
+}

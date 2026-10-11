@@ -1,0 +1,11 @@
+class {
+    this.name = "SecondBrain";
+
+    function onApplicationStart() {
+        // Existing volumes are migrated explicitly; do not try to recover an absent schema.
+        var schema = queryExecute("SELECT to_regclass('document_tasks') AS tasks, to_regclass('budget_reservations') AS budget");
+		if ( !isNull(schema.tasks[1]) ) new secondBrain.LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId)).recover();
+        if ( !isNull(schema.budget[1]) ) new secondBrain.BudgetService().recoverOrphans();
+        return true;
+    }
+}

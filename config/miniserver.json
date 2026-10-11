@@ -1,0 +1,10 @@
+{
+    "webRoot": "/app",
+    "host": "0.0.0.0",
+    "port": 8080,
+    "rewrites": false,
+    "undertowOptions": {
+        "MAX_ENTITY_SIZE": 1001000000,
+        "MULTIPART_MAX_ENTITY_SIZE": 1001000000
+    }
+}

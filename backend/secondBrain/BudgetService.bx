@@ -1,0 +1,316 @@
+/**
+ * Role B — AI budget ledger (phase 02.7–02.8).
+ * Atomic reservation before every provider call; conservative unknown-usage handling.
+ * Pure BoxLang: no HTTP / Next.js dependency.
+ */
+class {
+	private numeric function defaultDailyLimitUSD() { return 20; }
+	private numeric function orphanMinutes() { return 15; }
+
+	private boolean function isFiniteNumber(required any value) {
+		if ( !isInstanceOf(arguments.value, "java.lang.Number") ) return false;
+		try {
+			var decimal = createObject("java", "java.math.BigDecimal").init(arguments.value.toString());
+			return createObject("java", "java.lang.Double").isFinite(decimal.doubleValue());
+		} catch ( any failure ) {
+			return false;
+		}
+	}
+
+	private numeric function asMoney(required any value) {
+		if ( !isFiniteNumber(arguments.value) ) throw( message="Budget amount must be a finite number" );
+		var decimal = createObject("java", "java.math.BigDecimal").init(arguments.value.toString());
+		if ( decimal.signum() < 0 ) throw( message="Budget amount cannot be negative" );
+		return decimal.setScale(8, createObject("java", "java.math.RoundingMode").HALF_UP).doubleValue();
+	}
+
+	private string function todayUtc() {
+		// BoxLang dateFormat follows Java patterns: MM=month, mm=minutes.
+		return dateFormat(dateConvert("local2Utc", now()), "yyyy-MM-dd");
+	}
+
+	private struct function ratesFromEnv() {
+		var env = server.system.environment;
+		var priceDate = trim(env.P00_PRICE_DATE ?: "");
+		var priceReference = trim(env.P00_PRICE_REFERENCE ?: "");
+		var chatIn = val(env.P00_CHAT_INPUT_USD_PER_MILLION ?: 0);
+		var chatOut = val(env.P00_CHAT_OUTPUT_USD_PER_MILLION ?: 0);
+		var embed = val(env.P00_EMBED_USD_PER_MILLION ?: 0);
+		if ( !reFind("^20[0-9]{2}-[0-9]{2}-[0-9]{2}$", priceDate) || !len(priceReference) ) {
+			throw( message="Budget tariffs require P00_PRICE_DATE and P00_PRICE_REFERENCE; no call without dated rates" );
+		}
+		if ( chatIn <= 0 || chatOut <= 0 || embed <= 0 ) {
+			throw( message="Budget tariffs must be positive for chat input/output and embeddings" );
+		}
+		return {
+			priceDate: priceDate,
+			priceReference: priceReference,
+			chatInputPerMillion: chatIn,
+			chatOutputPerMillion: chatOut,
+			embedPerMillion: embed
+		};
+	}
+
+	private void function ensureDay(required string dayUtc, required numeric limitUsd) {
+		queryExecute(
+			"INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), CAST(? AS NUMERIC)) ON CONFLICT (day_utc) DO NOTHING",
+			[ arguments.dayUtc, arguments.limitUsd ]
+		);
+	}
+
+	private numeric function committedUsd(required string dayUtc) {
+		var rows = queryExecute(
+			"
+			SELECT COALESCE(SUM(
+				CASE
+					WHEN status IN ('reserved', 'unknown_retained') THEN GREATEST(reserved_usd, COALESCE(actual_usd, 0))
+					WHEN status = 'settled' THEN actual_usd
+					ELSE 0
+				END
+			), 0) AS committed
+			FROM budget_reservations
+			WHERE day_utc = CAST(? AS DATE)
+			",
+			[ arguments.dayUtc ],
+			{ returntype: "array" }
+		);
+		return asMoney(rows[1].committed);
+	}
+
+	numeric function estimateChatUSD(required numeric promptTokens, required numeric completionTokens) {
+		var rates = ratesFromEnv();
+		return asMoney((arguments.promptTokens * rates.chatInputPerMillion + arguments.completionTokens * rates.chatOutputPerMillion) / 1000000);
+	}
+
+	numeric function estimateEmbedUSD(required numeric promptTokens) {
+		var rates = ratesFromEnv();
+		return asMoney((arguments.promptTokens * rates.embedPerMillion) / 1000000);
+	}
+
+	struct function snapshot(string dayUtc="") {
+		var day = len(arguments.dayUtc) ? arguments.dayUtc : todayUtc();
+		var limitUsd = asMoney(val(server.system.environment.BUDGET_DAILY_USD ?: defaultDailyLimitUSD()));
+		ensureDay(day, limitUsd);
+		var committed = committedUsd(day);
+		var dayRow = queryExecute(
+			"SELECT limit_usd FROM budget_days WHERE day_utc = CAST(? AS DATE)",
+			[ day ],
+			{ returntype: "array" }
+		);
+		var limit = asMoney(dayRow[1].limit_usd);
+		return {
+			dayUtc: day,
+			limitUSD: limit,
+			committedUSD: committed,
+			availableUSD: asMoney(max(0, limit - committed)),
+			rates: ratesFromEnv()
+		};
+	}
+
+	/**
+	 * Atomically reserve estimated cost for one provider operation.
+	 * Denied reservations never authorize a provider call.
+	 */
+	struct function reserve(
+		required string operation,
+		required string model,
+		required numeric estimatedUSD,
+		numeric dailyLimitUSD=0
+	) {
+		var ops = "embed,chat,concepts,retry";
+		if ( !listFindNoCase(ops, arguments.operation) ) throw( message="Unsupported budget operation" );
+		if ( !len(trim(arguments.model)) ) throw( message="Budget reservation requires a model" );
+		var estimate = asMoney(arguments.estimatedUSD);
+		if ( estimate <= 0 ) throw( message="Budget estimate must be positive" );
+		ratesFromEnv();
+		var day = todayUtc();
+		var limit = asMoney(arguments.dailyLimitUSD > 0 ? arguments.dailyLimitUSD : val(server.system.environment.BUDGET_DAILY_USD ?: defaultDailyLimitUSD()));
+
+		transaction {
+			ensureDay(day, limit);
+			if ( arguments.dailyLimitUSD > 0 ) {
+				queryExecute(
+					"UPDATE budget_days SET limit_usd = CAST(? AS NUMERIC) WHERE day_utc = CAST(? AS DATE)",
+					[ limit, day ]
+				);
+			}
+			var dayRow = queryExecute(
+				"SELECT limit_usd FROM budget_days WHERE day_utc = CAST(? AS DATE) FOR UPDATE",
+				[ day ],
+				{ returntype: "array" }
+			);
+			var effectiveLimit = asMoney(dayRow[1].limit_usd);
+			var committed = committedUsd(day);
+			if ( committed + estimate > effectiveLimit ) {
+				return {
+					ok: false,
+					denied: true,
+					reason: "budget_insufficient",
+					dayUtc: day,
+					limitUSD: effectiveLimit,
+					committedUSD: committed,
+					estimatedUSD: estimate,
+					availableUSD: asMoney(max(0, effectiveLimit - committed))
+				};
+			}
+			queryExecute(
+				"
+				INSERT INTO budget_reservations (
+					day_utc, operation, model, estimated_usd, reserved_usd, status, result
+				) VALUES (
+					CAST(? AS DATE), ?, ?, CAST(? AS NUMERIC), CAST(? AS NUMERIC), 'reserved', 'open'
+				)
+				",
+				[ day, arguments.operation, arguments.model, estimate, estimate ]
+			);
+			var inserted = queryExecute(
+				"SELECT currval(pg_get_serial_sequence('budget_reservations', 'id')) AS id"
+			);
+			return {
+				ok: true,
+				denied: false,
+				reservationId: inserted.id[1],
+				dayUtc: day,
+				estimatedUSD: estimate,
+				reservedUSD: estimate,
+				limitUSD: effectiveLimit,
+				committedUSD: asMoney(committed + estimate),
+				availableUSD: asMoney(effectiveLimit - committed - estimate)
+			};
+		}
+	}
+
+	struct function getReservation(required numeric reservationId) {
+		var rows = queryExecute(
+			"SELECT * FROM budget_reservations WHERE id = CAST(? AS BIGINT)",
+			[ arguments.reservationId ],
+			{ returntype: "array" }
+		);
+		if ( rows.len() != 1 ) throw( message="Budget reservation not found" );
+		return rows[1];
+	}
+
+	struct function release(required numeric reservationId, string reason="released") {
+		transaction {
+			var rows = queryExecute(
+				"SELECT id, status FROM budget_reservations WHERE id = CAST(? AS BIGINT) FOR UPDATE",
+				[ arguments.reservationId ],
+				{ returntype: "array" }
+			);
+			if ( rows.len() != 1 ) throw( message="Budget reservation not found" );
+			if ( rows[1].status != "reserved" ) {
+				return { ok: false, reason: "not_reserved", status: rows[1].status };
+			}
+			queryExecute(
+				"
+				UPDATE budget_reservations
+				SET status = 'released', result = 'released', error_safe = ?, updated_at = CURRENT_TIMESTAMP, settled_at = CURRENT_TIMESTAMP
+				WHERE id = CAST(? AS BIGINT)
+				",
+				[ left(arguments.reason, 240), arguments.reservationId ]
+			);
+			return { ok: true, reservationId: arguments.reservationId, status: "released" };
+		}
+	}
+
+	struct function settle(
+		required numeric reservationId,
+		required numeric actualUSD,
+		numeric promptTokens=0,
+		numeric completionTokens=0,
+		numeric totalTokens=0,
+		string result="success"
+	) {
+		var actual = asMoney(arguments.actualUSD);
+		transaction {
+			var rows = queryExecute(
+				"SELECT * FROM budget_reservations WHERE id = CAST(? AS BIGINT) FOR UPDATE",
+				[ arguments.reservationId ],
+				{ returntype: "array" }
+			);
+			if ( rows.len() != 1 ) throw( message="Budget reservation not found" );
+			var reservation = rows[1];
+			if ( reservation.status != "reserved" && reservation.status != "unknown_retained" ) {
+				return { ok: false, reason: "not_open", status: reservation.status };
+			}
+			var day = dateFormat(reservation.day_utc, "yyyy-MM-dd");
+			queryExecute("SELECT day_utc FROM budget_days WHERE day_utc = CAST(? AS DATE) FOR UPDATE", [ day ]);
+			var committedWithout = committedUsd(day) - max(asMoney(reservation.reserved_usd), isNull(reservation.actual_usd) ? 0 : asMoney(reservation.actual_usd));
+			var dayRow = queryExecute("SELECT limit_usd FROM budget_days WHERE day_utc = CAST(? AS DATE)", [ day ], {returntype: "array"});
+			var exceeded = committedWithout + actual > asMoney(dayRow[1].limit_usd);
+			queryExecute(
+				"
+				UPDATE budget_reservations
+				SET status = 'settled', result = ?, actual_usd = CAST(? AS NUMERIC),
+					prompt_tokens = CAST(? AS INTEGER), completion_tokens = CAST(? AS INTEGER),
+					total_tokens = CAST(? AS INTEGER), updated_at = CURRENT_TIMESTAMP, settled_at = CURRENT_TIMESTAMP
+				WHERE id = CAST(? AS BIGINT)
+				",
+				[ arguments.result, actual, arguments.promptTokens, arguments.completionTokens, arguments.totalTokens, arguments.reservationId ]
+			);
+			return {
+				ok: !exceeded,
+				reason: exceeded ? "actual_exceeds_budget" : "settled",
+				reservationId: arguments.reservationId,
+				status: "settled",
+				actualUSD: actual,
+				releasedUSD: asMoney(max(0, asMoney(reservation.reserved_usd) - actual))
+			};
+		}
+	}
+
+	/** Conservative path when the provider may have consumed without reporting usage. */
+	struct function markUnknown(required numeric reservationId, string errorSafe="provider_timeout") {
+		transaction {
+			var rows = queryExecute(
+				"SELECT id, status FROM budget_reservations WHERE id = CAST(? AS BIGINT) FOR UPDATE",
+				[ arguments.reservationId ],
+				{ returntype: "array" }
+			);
+			if ( rows.len() != 1 ) throw( message="Budget reservation not found" );
+			if ( rows[1].status != "reserved" ) {
+				return { ok: false, reason: "not_reserved", status: rows[1].status };
+			}
+			queryExecute(
+				"
+				UPDATE budget_reservations
+				SET status = 'unknown_retained', result = 'timeout', error_safe = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = CAST(? AS BIGINT)
+				",
+				[ left(arguments.errorSafe, 240), arguments.reservationId ]
+			);
+			return { ok: true, reservationId: arguments.reservationId, status: "unknown_retained" };
+		}
+	}
+
+	/**
+	 * Recover orphan reserved rows after crash/restart without double-spend:
+	 * they become unknown_retained and keep counting against the day limit.
+	 */
+	struct function recoverOrphans(numeric maxAgeMinutes=0) {
+		var age = arguments.maxAgeMinutes > 0 ? arguments.maxAgeMinutes : orphanMinutes();
+		transaction {
+			var stale = queryExecute(
+				"
+				SELECT id FROM budget_reservations
+				WHERE status = 'reserved'
+				  AND created_at < (CURRENT_TIMESTAMP - (?::TEXT || ' minutes')::interval)
+				",
+				[ toString(age) ]
+			);
+			var ids = [];
+			for ( var i = 1; i <= stale.recordCount; i++ ) {
+				ids.append(stale.id[i]);
+				queryExecute(
+					"
+					UPDATE budget_reservations
+					SET status = 'unknown_retained', result = 'unknown', error_safe = 'orphan_recovered', updated_at = CURRENT_TIMESTAMP
+					WHERE id = CAST(? AS BIGINT) AND status = 'reserved'
+					",
+					[ toString(stale.id[i]) ]
+				);
+			}
+			return { ok: true, recoveredCount: ids.len(), reservationIds: ids };
+		}
+	}
+}

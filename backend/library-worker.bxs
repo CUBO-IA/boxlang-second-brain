@@ -1,0 +1,6 @@
+// One bounded lease-worker pass; every provider operation is budget-gated.
+env = server.system.environment;
+taskId = trim(env.P03_TASK_ID ?: "");
+maxTasks = len(trim(env.P03_MAX_TASKS ?: "")) ? toNumeric(env.P03_MAX_TASKS) : 10;
+result = new secondBrain.LibraryTaskWorker().run(maxTasks, taskId);
+println(jsonSerialize(result));

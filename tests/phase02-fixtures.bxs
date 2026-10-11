@@ -1,0 +1,96 @@
+// P02.2,P02.3 / V16,V18 quota/path audit and narrow cleanup for phase02-http.mjs.
+run = getSystemSetting("P02_RUN", "");
+mode = getSystemSetting("P02_FIXTURE", "");
+if ( reFind("^[a-z0-9-]{1,40}$", run) != 1 || !listFind("quota,audit,interrupted,cleanup,ui,ui-processing", mode) ) throw(message="Explicit synthetic run/mode required");
+email = "p02-#run#-admin@example.invalid";
+space = queryExecute("SELECT s.id FROM spaces s JOIN accounts a ON a.id = s.created_by WHERE a.email = ? AND s.name = ?", [email, "P02 quota " & run]);
+if (space.recordCount != 1) throw(message="Expected exactly one synthetic quota space");
+if (mode == "quota") {
+    count = queryExecute("SELECT COUNT(*) AS total FROM documents WHERE space_id = CAST(? AS BIGINT)", [toString(space.id[1])]);
+    if (count.total[1] != 0) throw(message="Quota seed requires an empty synthetic space");
+    queryExecute("INSERT INTO documents (id, space_id) SELECT gen_random_uuid(), CAST(? AS BIGINT) FROM generate_series(1, 999)", [toString(space.id[1])]);
+    println("OK: 999 synthetic document identities seeded for concurrent quota check.");
+} else if (mode == "audit") {
+    count = queryExecute("SELECT COUNT(*) AS total FROM documents WHERE space_id = CAST(? AS BIGINT) AND deleted_at IS NULL", [toString(space.id[1])]);
+    if (count.total[1] != 1000) throw(message="Concurrent quota exceeded/undershot 1,000");
+    for (entry in directoryList("/data/second-brain/uploads", false, "query")) {
+        if (entry.type == "File") throw(message="Upload escaped its generated temporary directory");
+    }
+    for (entry in directoryList("/data/second-brain", false, "query")) {
+        if (entry.type == "File") throw(message="Upload escaped the controlled private subdirectories");
+    }
+    println("OK P02.2,P02.3 / V16,V18: exactly 1,000 synthetic documents after concurrent uploads; no files escaped private subdirectories.");
+} else if (mode == "interrupted") {
+    task = queryExecute("SELECT t.id, t.version_id FROM document_tasks t JOIN document_versions v ON v.id = t.version_id JOIN accounts a ON a.id = v.author_id WHERE a.email = ? AND v.name = 'persist.txt' AND t.state = 'pending'", [email]);
+    if (task.recordCount != 1) throw(message="Expected exactly one pending restart fixture");
+    library = new secondBrain.LibraryService();
+    claimed = library.claimTask(task.id[1]);
+    if (structIsEmpty(claimed)) throw(message="Could not claim restart fixture");
+    fileMove(claimed.original, "/data/second-brain/staging/" & claimed.versionId & ".part");
+    queryExecute("UPDATE document_versions SET storage_state = 'stored' WHERE id = CAST(? AS UUID)", [claimed.versionId]);
+    queryExecute("UPDATE document_tasks SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = CAST(? AS UUID)", [claimed.id]);
+    println("OK: synthetic stored original and expired processing lease prepared for a REAL restart.");
+} else if (mode == "ui-processing") {
+    task = queryExecute("SELECT t.id FROM document_tasks t JOIN document_versions v ON v.id = t.version_id JOIN accounts a ON a.id = v.author_id WHERE a.email = ? AND v.name = 'ui-provider.txt' AND t.state = 'pending'", [email]);
+    if (task.recordCount != 1 || structIsEmpty(new secondBrain.LibraryService().claimTask(task.id[1]))) throw(message="Expected one UI-retried task to claim");
+    println("OK: real UI-retried task claimed; browser polling must show processing.");
+} else if (mode == "ui") {
+    // Synthetic task states, not AI/indexing. Exercise the real private library/API/UI.
+    accounts = new secondBrain.AccountService();
+    input = {method: "POST", body: {email: email, password: "phase02-synthetic-password"}, origin: getSystemSetting("APP_ORIGIN"), csrfToken: "", sessionToken: "", spaceId: ""};
+    login = accounts.handle("login", input);
+    if (login.status != 200) throw(message="Synthetic UI login failed");
+    input.sessionToken = listLast(listFirst(login.setCookie, ";"), "=");
+    input.csrfToken = login.body.csrfToken;
+    httpSpace = queryExecute("SELECT s.id FROM spaces s JOIN accounts a ON a.id = s.created_by WHERE a.email = ? AND s.name = ?", [email, "P02 HTTP " & run]);
+    input.spaceId = toString(httpSpace.id[1]);
+    library = new secondBrain.LibraryService((document, version) => {});
+    directory = library.uploadDirectory();
+    try {
+        for (category in ["provider", "budget"]) {
+            fileWrite(directory & "/input.txt", "Synthetic " & category & " " & run);
+            accepted = library.acceptFile(input, directory & "/input.txt", "ui-#category#.txt", "ui-" & category);
+            task = library.claimTask(accepted.taskId);
+            library.failTask(task.id, task.leaseToken, category, false);
+        }
+        fileWrite(directory & "/input.txt", "Synthetic stable original " & run);
+        accepted = library.acceptFile(input, directory & "/input.txt", "ui-stable.txt", "ui-stable");
+        task = library.claimTask(accepted.taskId);
+        library.publishTask(task.id, task.leaseToken, (document, version, previous) => {});
+        fileWrite(directory & "/input.txt", "Synthetic failed replacement " & run);
+        replacement = library.acceptFile(input, directory & "/input.txt", "ui-replacement.txt", "ui-replacement", accepted.documentId);
+        task = library.claimTask(replacement.taskId);
+        library.failTask(task.id, task.leaseToken, "provider", false);
+        input.body = {name: "P02 UI other " & run};
+        other = accounts.handle("createSpace", input);
+        if (other.status != 201) throw(message="Synthetic second space failed");
+        input.spaceId = toString(other.body.space.id);
+        fileWrite(directory & "/input.txt", "Synthetic other-space content " & run);
+        library.acceptFile(input, directory & "/input.txt", "ui-other-space.txt", "ui-other");
+        println("OK: synthetic provider/budget failures, published-original/failed-replacement and isolated second space ready for browser; no AI.");
+    } finally { directoryDelete(directory, true); }
+} else {
+    // This run contains only synthetic callbacks, never real knowledge derivatives.
+    library = new secondBrain.LibraryService((document, version) => {});
+    for (role in ["admin", "editor", "reader", "outsider"]) {
+        address = "p02-#run#-#role#@example.invalid";
+        spaces = queryExecute("SELECT s.id FROM spaces s JOIN accounts a ON a.id = s.created_by WHERE a.email = ?", [address]);
+        for (synthetic in spaces) {
+            docs = queryExecute("SELECT id FROM documents WHERE space_id = CAST(? AS BIGINT)", [toString(synthetic.id)]);
+            for (doc in docs) {
+                queryExecute("UPDATE documents SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP), cleanup_pending = TRUE WHERE id = CAST(? AS UUID)", [doc.id]);
+                library.cleanupDocument(doc.id);
+            }
+            remaining = queryExecute("SELECT id FROM documents WHERE space_id = CAST(? AS BIGINT) AND cleanup_pending", [toString(synthetic.id)]);
+            if (remaining.recordCount) throw(message="Cleanup incomplete; preserve test records for inspection");
+            queryExecute("UPDATE documents SET current_version = NULL, candidate_version = NULL WHERE space_id = CAST(? AS BIGINT)", [toString(synthetic.id)]);
+            queryExecute("DELETE FROM document_tasks WHERE document_id IN (SELECT id FROM documents WHERE space_id = CAST(? AS BIGINT))", [toString(synthetic.id)]);
+            queryExecute("DELETE FROM document_versions WHERE space_id = CAST(? AS BIGINT)", [toString(synthetic.id)]);
+            queryExecute("DELETE FROM documents WHERE space_id = CAST(? AS BIGINT)", [toString(synthetic.id)]);
+            queryExecute("DELETE FROM spaces WHERE id = CAST(? AS BIGINT)", [toString(synthetic.id)]);
+        }
+        queryExecute("DELETE FROM accounts WHERE email = ?", [address]);
+        queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [lCase(hash(address, "SHA-256"))]);
+    }
+    println("OK: only phase02 HTTP synthetic run " & run & " removed.");
+}

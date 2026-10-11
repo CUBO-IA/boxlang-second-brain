@@ -1,0 +1,64 @@
+// Role B — 03.9 CLI core path without Next.js (provider doubles only).
+import secondBrain.KnowledgeCore;
+import secondBrain.ProviderDouble;
+import secondBrain.TextNoteExtractor;
+import secondBrain.AnswerService;
+
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="This test clears ledger/knowledge data. Use an isolated Compose database and P02_ISOLATED_DATABASE=YES.");
+
+provider = new ProviderDouble();
+core = new KnowledgeCore(provider);
+// Ensure prior tiny-limit budget experiments cannot starve this CLI run.
+day = core.getBudget().snapshot().dayUtc;
+queryExecute("DELETE FROM budget_reservations WHERE day_utc = CAST(? AS DATE)", [ day ]);
+queryExecute(
+	"INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), CAST(? AS NUMERIC)) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = EXCLUDED.limit_usd",
+	[ day, 20 ]
+);
+queryExecute("DELETE FROM knowledge_fragments");
+queryExecute("DELETE FROM knowledge_documents");
+space = "space-b-cli";
+docA = "doc-req";
+docB = "doc-approver";
+rev = "rev-1";
+textA = "Para solicitar la aprobacion, envia el formulario al area legal.";
+textB = "La aprobacion la concede la directora de cumplimiento.";
+
+ingestA = core.ingestText(space, docA, rev, "requisitos.txt", textA);
+ingestB = core.ingestText(space, docB, rev, "aprobacion.txt", textB);
+if ( !ingestA.ok || !ingestB.ok ) throw( message="03.9 ingest both sources failed" );
+if ( ingestA.status != "indexed" || ingestB.status != "indexed" ) throw( message="03.9 publish incomplete" );
+if ( provider.getEmbedCalls() < 2 ) throw( message="03.9 expected embed calls" );
+
+both = core.ask(space, [ docA, docB ], "Como solicito la aprobacion y quien la concede?");
+if ( !both.ok || both.abstained ) throw( message="03.9 multifuente answer failed" );
+if ( both.citations.len() < 1 || both.claims.len() < 1 ) throw( message="03.9 missing claims/citations" );
+if ( both.claims[1].label != "supported" ) throw( message="03.9 claim label mismatch" );
+
+provider.setForceInsufficient(true);
+onlyA = core.ask(space, [ docA ], "Quien concede la aprobacion?");
+provider.setForceInsufficient(false);
+if ( !onlyA.ok ) throw( message="P03.2 selection query failed" );
+if ( !onlyA.abstained && onlyA.citations.len() > 0 && onlyA.citations[1].documentId != docA ) {
+	throw( message="P03.2 citation leaked outside selection" );
+}
+
+empty = core.ask(space, [], "pregunta sin seleccion");
+if ( !empty.abstained || empty.reason != "no_evidence_in_selection" ) throw( message="P03.2 empty selection must abstain" );
+
+foreign = core.ask(space, [ "doc-other-space" ], "pregunta");
+if ( !foreign.abstained ) throw( message="P03.2 unknown selection must abstain" );
+
+extractor = new TextNoteExtractor();
+lines = extractor.lines("uno" & char(13) & char(10) & "dos");
+if ( lines.len() != 2 || lines[1].fragmentId != "L000001" ) throw( message="03.1 line ids failed" );
+
+answers = new AnswerService();
+invalid = answers.tryBuildFromRetrieved(
+	"x",
+	[ { id: "f1", documentId: "d1", text: "t", location: { kind: "lines", lineStart: 1, lineEnd: 1 } } ],
+	[ { text: "bad", label: "supported", supportFragmentIds: [ "missing" ] } ]
+);
+if ( invalid.ok ) throw( message="invalid citation must be rejected" );
+
+println("OK: Knowledge core CLI ingest/retrieve/answer with doubles; selection not widened; invalid citations rejected.");

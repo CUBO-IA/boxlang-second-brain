@@ -1,0 +1,25 @@
+function verify(required boolean condition, required string message) { if ( !arguments.condition ) throw(message=arguments.message); }
+
+function run() {
+	var answers = new secondBrain.AnswerService();
+	var retrieved = [
+		{id:"txt-fragment", documentId:"txt-document", revisionId:"txt-revision", text:"Applicants submit SR-204 to legal intake.", location:{kind:"lines",lineStart:1,lineEnd:1}, provenance:{kind:"upload"}, name:"process.txt"},
+		{id:"note-fragment", documentId:"note-document", revisionId:"note-revision", text:"Marta is an applicant.", location:{kind:"lines",lineStart:1,lineEnd:1}, provenance:{kind:"note"}, name:"Marta"}
+	];
+	var claim = {text:"Marta must submit SR-204 to legal intake.",label:"inferred",supportFragmentIds:["txt-fragment","note-fragment"],premises:["Applicants submit SR-204 to legal intake.","Marta is an applicant."]};
+	var valid = answers.tryBuildFromRetrieved("synthetic", retrieved, [claim]);
+	verify(valid.ok && valid.answer.ok && !valid.answer.abstained, "An inferred claim with explicit premises must validate");
+	verify(valid.answer.claims.len() == 1 && valid.answer.claims[1].label == "inferred" && valid.answer.claims[1].premises.len() == 2, "Validated inferred claim must preserve explicit premises");
+	for ( var premise in valid.answer.claims[1].premises ) verify(len(trim(premise)) > 0, "Validated premises must be explicit non-empty text");
+	verify(valid.answer.citations.len() == 2, "Validated inference must retain both cited fragments");
+	for ( var fragmentId in claim.supportFragmentIds ) verify(valid.answer.citations.filter((citation) => citation.fragmentId == fragmentId).len() == 1, "Inference citation must resolve to its supplied fragment");
+
+	var missingPremises = answers.tryBuildFromRetrieved("synthetic", retrieved, [{text:claim.text,label:"inferred",supportFragmentIds:claim.supportFragmentIds,premises:[]}]);
+	verify(!missingPremises.ok, "Inferred claim without premises must be rejected");
+	var outsideCitation = answers.tryBuildFromRetrieved("synthetic", retrieved, [{text:claim.text,label:"inferred",supportFragmentIds:["not-retrieved"],premises:claim.premises}]);
+	verify(!outsideCitation.ok, "Inference citing a fragment outside retrieval must be rejected");
+
+	println("OK: inferred claims require explicit premises and current retrieved citations.");
+}
+
+run();

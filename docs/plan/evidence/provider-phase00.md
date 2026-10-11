@@ -2,6 +2,8 @@
 
 Fecha: 2026-10-11. Entorno aislado `second-brain-phase01`; revisión de base `46d9cd3`. bx-ai `3.5.0`, BoxLang `1.18.0`, PostgreSQL/pgvector Compose. Entrada sintética; sin documentos privados ni credenciales en este registro.
 
+**Nota histórica:** se conserva el resultado y coste del probe anterior. El parser/roundtrip fallido se corrigió después en `phase00-finish`; seguimiento, coste acumulado y alcance actualizado en [cierre de fase 00](phase00-closure.md). Esa evidencia supersede solo las conclusiones temporales del parser, no altera los resultados históricos.
+
 ## Preflight
 
 - Referencia oficial Standard consultada el 2026-10-11: [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios](https://developers.openai.com/api/docs/pricing), [embeddings](https://developers.openai.com/api/docs/guides/embeddings).
@@ -63,4 +65,6 @@ Salida sanitizada:
 
 Conclusión acotada: el valor almacenado en PostgreSQL coincide exactamente con la entrada; pgvector devuelve la fila correcta y el ranking local de auto-búsqueda queda primero. La corrupción observada está al convertir la cadena científica a `embedding` de salida de `findSimilar` (`val("1e-6") → 1`), no prueba una falla de almacenamiento ni de ranking. No se modificó bx-ai, no se añadió adaptador y no hubo llamadas adicionales de IA. El método `storeDocument` no quedó validado por este diagnóstico local debido al error de binding indicado; el probe previo y sus resultados/coste no cambian.
 
-Conclusión acotada: acceso real, endpoint, respuesta útil, uso/coste calculable y dimensión del embedding quedan observados. La escritura del vector sintético en DB conserva sus valores; la lectura pública de `findSimilar` queda bloqueada por el parser científico de bx-ai. No acredita ciclo reemplazo/borrado, loader, operación, hostname, TLS ni facturación. Fase 00 permanece **Bloqueada**; P00.9 sigue pendiente por hostname/TLS/condiciones externas. Coste del probe sin cambios: USD **0.00001244**.
+Conclusión acotada: acceso real, endpoint, respuesta útil, uso/coste calculable y dimensión del embedding quedan observados. La escritura del vector sintético en DB conserva sus valores; la lectura pública de `findSimilar` queda limitada por el parser científico de bx-ai (residuo conocido). Coste del probe sin cambios: USD **0.00001244**.
+
+**Bookkeeping posterior (2026-10-11):** la fase 00 se cerró como **Verificada** en [phase00-closure.md](phase00-closure.md). El residuo de `findSimilar` y la operación externa (hostname/TLS) no reabren el bloqueo de viabilidad; se tratan en implementación (SQL canónico) y fase 08 respectivamente.

@@ -1,6 +1,6 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones y permisos; frontend Next.js con delegación same-origin fija. Fase 01 no llama a servicios de IA y no implementa biblioteca, ingesta ni chats.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y biblioteca privada. La fase 03 está **Verificada en su alcance acotado**: TXT/notas, indexación con embeddings, recuperación con evidencia, afirmaciones inferidas con premisas, citas y conversaciones persistentes; Next.js delega same-origin a BoxLang. La revisión aprobó P03.1–P03.9 con pruebas deterministas/UI y aceptación sintética autorizada con proveedor real. Otros formatos, grafo, contradicciones, seguridad universal frente a inyección y despliegue remoto no quedan acreditados.
 
 ## Entorno
 
@@ -9,7 +9,7 @@
 - BoxLang AI (`bx-ai`) **3.5.0**, driver PostgreSQL (`bx-postgresql`) **1.2.0** y PostgreSQL **17.11** con pgvector **0.8.7**.
 - Docker Compose; no hace falta instalar runtimes ni módulos en el equipo.
 
-BoxLang AI ya integra PostgreSQL/pgvector para memoria vectorial y RAG. Las pruebas de fase 01 son deterministas y no realizan llamadas de IA.
+BoxLang AI ya integra PostgreSQL/pgvector para memoria vectorial y RAG. Las pruebas deterministas usan dobles y no realizan llamadas de IA; están separadas de la aceptación real de proveedor. Ver [evidencia de fase 03](docs/plan/evidence/phase03-implementation.md) para el comando autorizado, alcance y coste medido.
 
 ## Levantar el entorno
 
@@ -28,6 +28,12 @@ La migración de cuentas es versionada e idempotente; ejecútala también al act
 `APP_ORIGIN` debe coincidir exactamente con el origen público del navegador. En producción configura un origen `https://` detrás de TLS; la cookie de sesión recibe `Secure`. HTTP solo se admite para `localhost` o `127.0.0.1`. No publiques estos servicios directamente a Internet.
 
 `APP_ORIGIN` explícito prevalece; si se omite, Compose lo deriva de `FRONTEND_PORT` (por defecto `http://127.0.0.1:3000`). Para `localhost`, HTTPS o un dominio, configura el origen exacto que usa el navegador. Los puertos Compose pueden ajustarse con `FRONTEND_PORT`, `BACKEND_PORT` y `POSTGRES_PORT`.
+
+## Despliegue en Coolify
+
+`compose.yaml` no publica puertos del host; `compose.override.yaml` se carga automáticamente para desarrollo local y conserva los mapeos loopback anteriores. Si Coolify invoca Compose con `-f compose.yaml`, el override no se incluye: publica el frontend mediante su puerto interno `3000` y configura el dominio público solo en `frontend` (por ejemplo, `https://brain.example.com:3000` en Domains). El origen que verá el navegador sigue siendo `https://brain.example.com`, sin `:3000`; establece `APP_ORIGIN` exactamente a ese origen HTTPS. No asignes dominios a `boxlang` ni `postgres`: los servicios se comunican por sus nombres internos (`boxlang:8080` y `postgres:5432`).
+
+Los bind mounts del repositorio requieren habilitar **Preserve repository during deployment** en Coolify. Tras corregir la configuración, recarga y vuelve a desplegar el servicio principal. El despliegue remoto no se ha probado.
 
 ## API de fase 01
 
@@ -76,14 +82,38 @@ P00_ALLOW_PROVIDER_CALLS=YES docker compose -p second-brain-phase01 exec -e P00_
 
 El `.env.example` deja `P00_MAX_USD=1` y fecha/fuente/tarifas explícitas. Según el precio **Standard** publicado a **2026-10-11**, el probe actual usa `gpt-6-luna`: USD 0.10/M tokens de entrada y USD 0.50/M de salida; `text-embedding-3-small`: USD 0.02/M de entrada. Referencias: [modelo GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios API](https://developers.openai.com/api/docs/pricing) y [modelos de embeddings](https://developers.openai.com/api/docs/guides/embeddings). Las tarifas pueden variar por modalidad y procesamiento regional; vuelve a confirmar fecha, tipo de endpoint y tarifa antes de permitir llamadas.
 
-El probe sintético ejecutado en el worktree validó las respuestas de chat y embedding, uso reportado y 1,536 dimensiones. El roundtrip pgvector falló en la dimensión 92 y queda pendiente diagnosticar; el resultado completo y coste calculado están en [evidencia P00](docs/plan/evidence/provider-phase00.md). No se cambió de modelo. El guard requiere además el opt-in explícito, tarifas/fecha/referencia válidas y un techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
+Los probes sintéticos validaron chat/embedding reales, uso, 1.536 dimensiones y roundtrip pgvector. El parser científico de bx-ai se corrige únicamente durante el build, con guard de versión/fuente. El [cierre técnico](docs/plan/evidence/phase00-closure.md) registra resultados y coste acumulado; el [histórico](docs/plan/evidence/provider-phase00.md) conserva el fallo previo. No se cambió de modelo ni se hicieron llamadas nuevas al integrar. El guard requiere opt-in explícito, tarifas/fecha/referencia válidas y techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
 
 ## MCP y documentación
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Estado de seguimiento: fase 01 **Verificada** con gate aprobado por Sol; fase 00 continúa **Bloqueada** por roundtrip vectorial y evidencia externa pendiente. Ver [plan e informe de fase 01](docs/plan/01-cuentas-espacios-y-permisos.md), [evidencia de proveedor](docs/plan/evidence/provider-phase00.md) y [verificación](docs/plan/verificacion.md).
+Estado: fases **00, 01, 02 y 03 Verificadas** dentro de sus alcances documentados. La fase 03 cubre TXT/notas, chat y evidencia; su revisión no acredita las fases posteriores ni el despliegue remoto. Consulte [el registro de implementación y cierre](docs/plan/evidence/phase03-implementation.md).
 
-## Alcance futuro, no implementado
+Comprobaciones de fase 00 sin llamadas IA:
 
-Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. El probe de modelos es independiente de esa funcionalidad y no implica integración productiva; acceso de cuenta, respuestas/uso reales y dimensiones/operación siguen pendientes. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+```bash
+docker compose exec -T boxlang boxlang tests/vector-roundtrip.bxs
+docker compose exec -T boxlang boxlang tests/probe.bxs
+docker compose exec -T frontend node /tests/contracts.mjs
+docker compose run --rm --no-deps -v "$PWD:/repo:ro" -w /repo frontend node tests/viewer-fixtures.mjs
+```
+
+La ruta de desarrollo `http://127.0.0.1:3000/feasibility` abre únicamente fixtures sintéticos fijos; incluye PDF original y Markdown renderizado con citas resaltadas. El subset Office, las licencias y límites están en el cierre técnico; no equivale a ingesta ni a visores privados de documentos de usuarios.
+
+## Alcance pendiente
+
+La ingesta verificada se limita a TXT y notas; los demás formatos, contradicciones y grafo siguen pendientes. El cambio de configuración de puertos para Coolify está en el repositorio (`04366a2`), pero el despliegue remoto no se ha probado. HTTPS de producción, backups y rendimiento aún no se han verificado. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+
+## Fase 02 — integración A+B+C
+
+Migración 2 de biblioteca, migración 3 de presupuesto/conocimiento y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. El aviso presupuestario usa el ledger de B, sin exponer consumo ajeno. **Fase 02 Verificada:** concurrencia, recuperación tras reinicio y UI aprobadas sin IA. No se activa ingesta ni IA. [Evidencia de cierre](docs/plan/evidence/phase02-closure.md).
+
+```sh
+docker compose up -d --no-deps --wait boxlang
+docker compose exec -T boxlang boxlang backend/migrations/migrate.bxs
+docker compose exec -T -e P02_RUN=core-check-01 boxlang boxlang tests/phase02-core.bxs
+docker compose exec -T boxlang boxlang backend/library-maintenance.bxs
+```
+
+El [informe A](docs/plan/evidence/phase02-platform-security.md) contiene operaciones/parámetros, límites, contrato para B/C y la secuencia HTTP completa con cuota concurrente, reinicio real y limpieza acotada. Ejecutar las migraciones antes de usar la biblioteca; originales de usuarios nunca se guardan en `backend/` ni se sirven como archivos públicos.

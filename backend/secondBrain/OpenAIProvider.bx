@@ -1,0 +1,58 @@
+/**
+ * Thin bx-ai OpenAI adapter for Role B real-AI runs.
+ * Opt-in only: callers must gate with P00_ALLOW_PROVIDER_CALLS=YES and dated rates.
+ */
+class {
+	property name="apiKey" type="string";
+	property name="timeoutSeconds" type="numeric" default=30;
+	property name="chatCalls" type="numeric" default=0;
+	property name="embedCalls" type="numeric" default=0;
+
+	function init(required string apiKey, numeric timeoutSeconds=30) {
+		if ( !len(trim(arguments.apiKey)) ) throw( message="OPENAI_API_KEY required" );
+		variables.apiKey = arguments.apiKey;
+		variables.timeoutSeconds = arguments.timeoutSeconds;
+		variables.chatCalls = 0;
+		variables.embedCalls = 0;
+		return this;
+	}
+
+	numeric function getChatCalls() { return variables.chatCalls; }
+	numeric function getEmbedCalls() { return variables.embedCalls; }
+
+	struct function chat(required string prompt, required string model, numeric maxCompletionTokens=64) {
+		variables.chatCalls++;
+		return aiChat(
+			arguments.prompt,
+			{
+				model: arguments.model,
+				max_completion_tokens: arguments.maxCompletionTokens,
+				reasoning_effort: "none"
+			},
+			{
+				provider: "openai",
+				apiKey: variables.apiKey,
+				timeout: variables.timeoutSeconds,
+				returnFormat: "raw",
+				logRequest: false,
+				logResponse: false
+			}
+		);
+	}
+
+	struct function embed(required string text, required string model) {
+		variables.embedCalls++;
+		return aiEmbed(
+			arguments.text,
+			{ model: arguments.model },
+			{
+				provider: "openai",
+				apiKey: variables.apiKey,
+				timeout: variables.timeoutSeconds,
+				returnFormat: "raw",
+				logRequest: false,
+				logResponse: false
+			}
+		);
+	}
+}

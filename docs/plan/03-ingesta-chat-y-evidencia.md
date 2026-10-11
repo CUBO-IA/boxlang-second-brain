@@ -1,6 +1,6 @@
 # Fase 03 — Ingesta TXT/notas, chat y evidencia
 
-**Estado:** Pendiente. **Dependencia:** [fase 02](02-biblioteca-tareas-y-presupuesto.md) verificada. [Índice](README.md).
+**Estado:** Verificada para el alcance acotado de fase 03 (TXT/notas, chat y evidencia). **Dependencia:** [fase 02](02-biblioteca-tareas-y-presupuesto.md) verificada. [Índice](README.md). La revisión de especificación y calidad aprobó P03.1–P03.9 según la evidencia de [implementación](evidence/phase03-implementation.md); esto no acredita formatos futuros, seguridad universal frente a inyección ni despliegue remoto.
 
 **Fuente:** [ingesta](../specification/03-ingesta-y-documentos.md), [consultas](../specification/04-consultas-y-evidencia.md) y [conversaciones](../specification/02-usuarios-y-espacios.md#conversaciones-privadas-y-compartidas). **Cobertura:** V03–V11, V15–V17 y V20.
 
@@ -19,15 +19,15 @@ Completar el primer recorrido con datos reales: cargar dos TXT o notas, indexarl
 
 ## Backend BoxLang: tareas concretas
 
-- [ ] **03.1 — Notas y extracción.** Crear/editar notas y extraer TXT conservando líneas o identificadores de fragmentos normalizados. Definir tratamiento de encoding y saltos de línea para que extracción y visor coincidan.
-- [ ] **03.2 — Fragmentos.** Particionar según decisión de fase 00, conservar ubicación de origen aunque cruce límites y asociar cada fragmento a espacio, documento y revisión interna. Una ubicación se calcula a partir del contenido, nunca se pide al modelo.
-- [ ] **03.3 — Indexación.** Generar embeddings reales con `bx-ai`, almacenar en pgvector y publicar solo resultados completos. Aplicar presupuesto, reintentos, reemplazo y eliminación de todos los fragmentos/vectores.
-- [ ] **03.4 — Recuperación.** Autorizar espacio y documentos seleccionados antes de buscar. Recuperar solo fuentes vigentes/disponibles de esa selección; no ampliar a toda la colección si la selección no encuentra evidencia. Validar selección vacía/ajena conforme al contrato, sin interpretación ambigua.
-- [ ] **03.5 — Respuesta.** Invocar `gpt-6-luna` con contenido tratado como datos no confiables. Asociar afirmaciones a fragmentos recuperados; validar IDs, respaldo y ubicaciones antes de publicar. Si el resultado no es verificable, rechazar/reintentar de forma acotada o abstenerse con error explícito, no mostrar una cita fabricada.
-- [ ] **03.6 — Clasificación.** Cada afirmación sustancial es respaldada, inferida o incierta; inferencias muestran premisas citadas. Sin evidencia suficiente, explicar qué falta sin búsqueda autónoma en internet.
-- [ ] **03.7 — Conversaciones.** Persistir autor, espacio, mensajes, selección y citas. Privadas por defecto; compartir/descompartir requiere autoría. Lectura compartida requiere membresía vigente; continuación siempre requiere autoría, aunque el lector sea administrador.
-- [ ] **03.8 — Historial seguro.** Usarlo como contexto conversacional, no como evidencia vigente; no reenviar al proveedor extractos de fuentes obsoletas o inaccesibles como respaldo. Conservar mensajes históricos accesibles según permisos y marcar citas reemplazadas/eliminadas.
-- [ ] **03.9 — Reutilización.** Prueba CLI BoxLang que invoque ingesta/recuperación/respuesta del núcleo, sin navegador ni llamadas a Next.js. Las operaciones HTTP delegan en ese mismo núcleo.
+- [x] **03.1 — Notas y extracción.** Crear/editar notas y extraer TXT conservando líneas o identificadores de fragmentos normalizados. Definir tratamiento de encoding y saltos de línea para que extracción y visor coincidan. *(Role B núcleo + dobles; ver [evidence/role-b-phase02-progress.md](evidence/role-b-phase02-progress.md).)*
+- [x] **03.2 — Fragmentos.** Particionar según decisión de fase 00, conservar ubicación de origen aunque cruce límites y asociar cada fragmento a espacio, documento y revisión interna. Una ubicación se calcula a partir del contenido, nunca se pide al modelo. *(Role B)*
+- [x] **03.3 — Indexación.** Generar embeddings (vía caller con presupuesto) y publicar solo resultados completos; reemplazo/eliminación de fragmentos. *(Aceptación real: inferencia con premisas y citas TXT+nota; prueba no facturable valida premisas/citas.)*
+- [x] **03.4 — Recuperación.** Autorizar espacio y documentos seleccionados antes de buscar; no ampliar selección vacía/ajena. *(Role B SQL)*
+- [x] **03.5 — Respuesta.** Afirmaciones ligadas a fragmentos recuperados; IDs/ubicaciones validados; abstención si no es verificable. *(Role B + dobles)*
+- [x] **03.6 — Clasificación.** Etiquetas supported/inferred/uncertain; inferencias con premisas; abstención sin evidencia. *(Role B)*
+- [x] **03.7 — Conversaciones.** Persistir autor, espacio, mensajes, selección y citas. Privadas por defecto; compartir/descompartir requiere autoría. Lectura compartida requiere membresía vigente; continuación siempre requiere autoría, aunque el lector sea administrador. *(Pruebas deterministas backend/proxy; el recorrido real verificó historial y selección, no compartir.)*
+- [x] **03.8 — Historial seguro.** Usarlo como contexto conversacional, no como evidencia vigente; no reenviar al proveedor extractos de fuentes obsoletas o inaccesibles como respaldo. Conservar mensajes históricos accesibles según permisos y marcar citas reemplazadas/eliminadas. *(Pruebas deterministas y recorrido real de reemplazo/borrado.)*
+- [x] **03.9 — Reutilización.** Prueba CLI BoxLang que invoque ingesta/recuperación/respuesta del núcleo, sin navegador ni llamadas a Next.js. *(Núcleo CLI, worker, HTTP/proxy, pruebas deterministas y aceptación real.)*
 
 ## Contratos observables mínimos
 
@@ -43,11 +43,11 @@ Los nombres/campos serializados se fijan con el contrato validado; estas relacio
 
 ## Frontend Next.js: pantallas y comportamiento
 
-- [ ] Crear/editar nota; visores TXT con líneas y notas normalizadas con ubicación estable.
-- [ ] Chat con historial, pregunta de seguimiento y elección explícita de todo el espacio o documentos concretos.
-- [ ] Presentar etiquetas por afirmación, premisas y citas; abrir visor en ubicación exacta y resaltar solo la evidencia asociada.
-- [ ] Conversaciones propias y compartidas según permisos; la compartida de otro autor no permite enviar mensajes.
-- [ ] Fuentes reemplazadas/eliminadas conservan marca histórica y no abren contenido nuevo como si fuera evidencia antigua. Mostrar carga, error y falta de evidencia en ES/EN.
+- [x] Crear/editar nota; visores TXT con líneas y notas normalizadas con ubicación estable. *(Verificado en fixture de navegador.)*
+- [x] Chat con historial, pregunta de seguimiento y elección explícita de todo el espacio o documentos concretos. *(Verificado con fixture y comprobaciones deterministas.)*
+- [x] Presentar etiquetas por afirmación, premisas y citas; abrir visor en ubicación exacta y resaltar solo la evidencia asociada. *(Resaltado Unicode repetido comprobado en ES/EN.)*
+- [x] Conversaciones propias y compartidas según permisos; la compartida de otro autor no permite enviar mensajes. *(Lectura compartida y modo solo lectura comprobados.)*
+- [x] Fuentes reemplazadas/eliminadas conservan marca histórica y no abren contenido nuevo como si fuera evidencia antigua. Mostrar carga, error y falta de evidencia en ES/EN. *(Cita histórica verificada en navegador y en el recorrido real de reemplazo/borrado.)*
 
 ## Pruebas de cierre
 
@@ -65,8 +65,8 @@ Los nombres/campos serializados se fijan con el contrato validado; estas relacio
 
 ## Entregables y criterio de finalización
 
-- [ ] Pipeline TXT/notas conectado a tareas/presupuesto, contratos de respuesta/cita y conversaciones persistentes.
-- [ ] Chat y dos visores funcionales, pruebas sin IA separadas de evaluación real de proveedor y CLI reutilizable.
-- [ ] P03.1–P03.9 aprobadas y regresión de seguridad/ciclo documental. El grafo y los demás formatos siguen pendientes, no se presentan como implementados.
+- [x] Pipeline TXT/notas conectado a tareas/presupuesto, contratos de respuesta/cita y conversaciones persistentes. *(Aceptación real y revisión de cierre aprobadas para P03.1–P03.9.)*
+- [x] Chat y visores funcionales, pruebas deterministas separadas de evaluación real de proveedor y CLI reutilizable. *(UI/flujo determinista, recorrido real y revisión acotada documentados.)*
+- [x] P03.1–P03.9 aprobadas para el alcance de TXT/notas, chat, evidencia y permisos; regresiones de ciclo documental incluidas. El grafo y los demás formatos siguen pendientes, no se presentan como implementados.
 
-**Siguiente:** [fase 04](04-formatos-y-previsualizadores.md).
+**Siguiente:** [fase 04](04-formatos-y-previsualizadores.md) — pendiente.

@@ -1,0 +1,65 @@
+import java:java.nio.file.Files;
+import java:java.nio.charset.StandardCharsets;
+import java:java.security.MessageDigest;
+
+/** Durable lease worker. Provider work happens before the short fenced publish transaction. */
+class {
+	function init(any provider="", any library="") {
+		variables.library = isObject(arguments.library) ? arguments.library : new secondBrain.LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId));
+		variables.core = isObject(arguments.provider) ? new secondBrain.KnowledgeCore(arguments.provider) : new secondBrain.KnowledgeCore();
+		return this;
+	}
+
+	private struct function failed(required any task, required string category, boolean retryable=true) {
+		variables.library.failTask(arguments.task.id, arguments.task.leaseToken, arguments.category, arguments.retryable);
+		return {claimed: true, taskId: arguments.task.id, status: "failed", category: arguments.category};
+	}
+
+	private string function readStrict(required struct task) {
+		var decoder = StandardCharsets.UTF_8.newDecoder();
+		var bytes = Files.readAllBytes(createObject("java", "java.io.File").init(arguments.task.original).toPath());
+		var text = decoder.decode(createObject("java", "java.nio.ByteBuffer").wrap(bytes)).toString();
+		var digest = lCase(binaryEncode(MessageDigest.getInstance("SHA-256").digest(bytes), "hex"));
+		if ( digest != arguments.task.sha256 ) throw(type="SecondBrain.Storage", message="Original hash mismatch");
+		return text;
+	}
+
+	struct function processOne(string taskId="") {
+		variables.library.recover();
+		var task = variables.library.claimTask(arguments.taskId);
+		if ( structIsEmpty(task) ) return {claimed: false, status: "idle"};
+		var heartbeat = () => variables.library.heartbeat(task.id, task.leaseToken);
+		if ( !heartbeat() ) return {claimed: true, taskId: task.id, status: "stale"};
+		var kind = task.provenance.kind ?: "upload";
+		if ( task.mediaType != "text/note" && (task.mediaType != "text/plain" || lCase(listLast(task.name, ".")) != "txt") ) return failed(task, "unsupported_format", false);
+		var raw;
+		try { raw = readStrict(task); }
+		catch (any storageFailure) { return failed(task, "storage", false); }
+		try {
+			var staged = variables.core.stageText(toString(task.spaceId), task.documentId, task.versionId, task.name, raw, task.mediaType, kind == "note" ? "note" : "txt", heartbeat);
+			if ( !staged.ok ) {
+				var category = staged.denied ? (staged.reason == "input_limit" ? "limits" : "budget") : (staged.reason == "input_limit" ? "limits" : "provider");
+				return failed(task, category, true);
+			}
+			if ( !heartbeat() ) return {claimed: true, taskId: task.id, status: "stale"};
+			var published = variables.library.publishTask(task.id, task.leaseToken, (documentId, revisionId, previous) => variables.core.getIndex().publishRevision(documentId, revisionId));
+			return {claimed: true, taskId: task.id, documentId: task.documentId, revisionId: task.versionId, status: published ? "completed" : "stale", fragmentCount: staged.fragmentCount};
+		} catch (any failure) {
+			if ( failure.type == "SecondBrain.LeaseLost" ) return {claimed: true, taskId: task.id, status: "stale"};
+			var category = failure.type == "SecondBrain.Storage" ? "storage" : (findNoCase("fragment", failure.message ?: "") ? "limits" : "extraction");
+			return failed(task, category, category != "storage");
+		}
+	}
+
+	struct function run(numeric maxTasks=10, string taskId="") {
+		if ( arguments.maxTasks < 1 || arguments.maxTasks > 100 ) throw(message="maxTasks must be between 1 and 100");
+		var results = [];
+		for ( var i = 1; i <= arguments.maxTasks; i++ ) {
+			var result = processOne(i == 1 ? arguments.taskId : "");
+			if ( !result.claimed ) break;
+			results.append(result);
+			if ( len(arguments.taskId) ) break;
+		}
+		return {processed: results.len(), results: results};
+	}
+}

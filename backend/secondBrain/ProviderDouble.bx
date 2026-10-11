@@ -1,0 +1,153 @@
+/**
+ * In-process provider double for budget and knowledge-core tests.
+ * Never contacts OpenAI; tracks whether a call was authorized/reached.
+ * Embeddings are bag-of-tokens with a small ES/EN synonym map for P03.4.
+ */
+class {
+	property name="chatCalls" type="numeric" default=0;
+	property name="embedCalls" type="numeric" default=0;
+	property name="failNext" type="string" default="";
+	property name="failEmbedAt" type="numeric" default=0;
+	property name="lastChatPrompt" type="string" default="";
+	property name="lastEmbedText" type="string" default="";
+	property name="forceInsufficient" type="boolean" default=false;
+	property name="nextChatContent" type="string" default="";
+	property name="chatHook";
+
+	function init() {
+		variables.chatCalls = 0;
+		variables.embedCalls = 0;
+		variables.failNext = "";
+		variables.failEmbedAt = 0;
+		variables.lastChatPrompt = "";
+		variables.lastEmbedText = "";
+		variables.forceInsufficient = false;
+		variables.nextChatContent = "";
+		variables.chatHook = "";
+		return this;
+	}
+
+	void function setFailNext(required string mode) {
+		variables.failNext = arguments.mode;
+	}
+
+	void function setFailAfterEmbeds(required numeric successfulCalls) {
+		variables.failEmbedAt = variables.embedCalls + arguments.successfulCalls + 1;
+	}
+
+	void function setForceInsufficient(required boolean value) {
+		variables.forceInsufficient = arguments.value;
+	}
+
+	void function setNextChatContent(required string content) { variables.nextChatContent = arguments.content; }
+	void function setChatHook(any hook="") { variables.chatHook = arguments.hook; }
+
+	numeric function getChatCalls() { return variables.chatCalls; }
+	numeric function getEmbedCalls() { return variables.embedCalls; }
+
+	private string function normalizeToken(required string token) {
+		var t = lCase(trim(arguments.token));
+		t = reReplace(t, "[^a-z0-9áéíóúñü]+", "", "all");
+		// Minimal bilingual synonyms for cross-language retrieval tests.
+		if ( listFindNoCase("aprobacion,aprobación,approval,approve,granted,concede,conceder", t) ) return "approval";
+		if ( listFindNoCase("solicitar,solicitud,request,apply", t) ) return "request";
+		if ( listFindNoCase("formulario,form", t) ) return "form";
+		if ( listFindNoCase("directora,director,manager", t) ) return "director";
+		if ( listFindNoCase("cumplimiento,compliance", t) ) return "compliance";
+		if ( listFindNoCase("quien,quién,who", t) ) return "who";
+		if ( listFindNoCase("como,cómo,how", t) ) return "how";
+		if ( listFindNoCase("responsable,owner", t) ) return "owner";
+		return t;
+	}
+
+	private array function tokensOf(required string text) {
+		var raw = reReplace(lCase(arguments.text), "[^a-z0-9áéíóúñü]+", " ", "all");
+		var parts = listToArray(raw, " ", false, true);
+		var tokens = [];
+		for ( var part in parts ) {
+			var normalized = normalizeToken(part);
+			if ( len(normalized) ) tokens.append(normalized);
+		}
+		return tokens;
+	}
+
+	private numeric function tokenBucket(required string token, required numeric dimensions) {
+		var javaString = createObject("java", "java.lang.String").init(arguments.token);
+		var hash = 0;
+		for ( var i = 0; i < javaString.length(); i++ ) hash = hash + javaString.codePointAt(i) * (i + 3);
+		return (abs(hash) % arguments.dimensions) + 1;
+	}
+
+	private array function deterministicEmbedding(required string text, numeric dimensions=1536) {
+		var vector = [];
+		for ( var d = 1; d <= arguments.dimensions; d++ ) vector.append(0);
+		var tokens = tokensOf(arguments.text);
+		if ( tokens.len() == 0 ) {
+			vector[1] = 1;
+			return vector;
+		}
+		for ( var token in tokens ) {
+			var bucket = tokenBucket(token, arguments.dimensions);
+			vector[bucket] = vector[bucket] + 1;
+		}
+		// L2 normalize for stable cosine ranking.
+		var sumSquares = 0;
+		for ( var value in vector ) sumSquares = sumSquares + (value * value);
+		var norm = createObject("java", "java.lang.Math").sqrt(sumSquares);
+		if ( norm <= 0 ) return vector;
+		for ( var i = 1; i <= vector.len(); i++ ) vector[i] = vector[i] / norm;
+		return vector;
+	}
+
+	struct function chat(required string prompt, required string model, numeric maxCompletionTokens=64) {
+		if ( variables.failNext == "timeout" ) {
+			variables.failNext = "";
+			throw( type="ProviderTimeout", message="Simulated provider timeout" );
+		}
+		if ( variables.failNext == "error" ) {
+			variables.failNext = "";
+			throw( message="Simulated provider error" );
+		}
+		variables.chatCalls++;
+		variables.lastChatPrompt = arguments.prompt;
+		if ( isCustomFunction(variables.chatHook) ) variables.chatHook(arguments.prompt);
+		var marker = "Retrieved fragment IDs: ";
+		var markerAt = find(marker, arguments.prompt);
+		var ids = markerAt ? trim(mid(arguments.prompt, markerAt + len(marker), len(arguments.prompt))) : "";
+		var content = variables.nextChatContent;
+		if ( len(content) ) variables.nextChatContent = "";
+		else if ( variables.forceInsufficient || !len(ids) ) content = "INSUFFICIENT_EVIDENCE";
+		else content = jsonSerialize({ claims: [ { text: "Deterministic test claim.", label: "supported", supportFragmentIds: [ listFirst(ids, ",") ], premises: [] } ] });
+		return {
+			model: arguments.model,
+			choices: [ {
+				finish_reason: "stop",
+				message: { role: "assistant", content: content }
+			} ],
+			usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 }
+		};
+	}
+
+	struct function embed(required string text, required string model) {
+		if ( variables.failEmbedAt > 0 && variables.embedCalls + 1 == variables.failEmbedAt ) {
+			variables.failEmbedAt = 0;
+			throw(message="Simulated provider error after partial embedding");
+		}
+		if ( variables.failNext == "timeout" ) {
+			variables.failNext = "";
+			throw( type="ProviderTimeout", message="Simulated provider timeout" );
+		}
+		if ( variables.failNext == "error" ) {
+			variables.failNext = "";
+			throw( message="Simulated provider error" );
+		}
+		variables.embedCalls++;
+		variables.lastEmbedText = arguments.text;
+		var vector = deterministicEmbedding(arguments.text);
+		return {
+			model: arguments.model,
+			data: [ { embedding: vector } ],
+			usage: { prompt_tokens: max(1, ceiling(len(arguments.text) / 4)), total_tokens: max(1, ceiling(len(arguments.text) / 4)) }
+		};
+	}
+}

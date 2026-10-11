@@ -1,0 +1,73 @@
+/** Validates structured model claims against the exact authorized retrieval set. */
+class {
+	private struct function fragmentById(required array retrieved, required string fragmentId) {
+		for ( var fragment in arguments.retrieved ) if ( fragment.id == arguments.fragmentId ) return fragment;
+		throw( message="Unknown fragment id for citation" );
+	}
+
+	struct function abstain(required string reason) {
+		return { ok: true, abstained: true, reason: arguments.reason, claims: [], citations: [], missing: arguments.reason };
+	}
+
+	/** Every published answer sentence is assembled only from validated structured claims. */
+	struct function buildFromRetrieved(required string modelText, required array retrieved, required array claimSpecs) {
+		if ( arguments.retrieved.len() == 0 ) return abstain("no_evidence_in_selection");
+		if ( trim(arguments.modelText) == "INSUFFICIENT_EVIDENCE" ) return abstain("model_reported_insufficient_evidence");
+		if ( !arguments.claimSpecs.len() ) return abstain("no_verifiable_claims");
+
+		var claims = [];
+		var citations = [];
+		var answerLines = [];
+		var citationIndex = 1;
+		for ( var spec in arguments.claimSpecs ) {
+			if ( !isStruct(spec) || !isInstanceOf(spec.text ?: "", "java.lang.String") || !len(trim(spec.text ?: "")) ) throw(message="Claim text required");
+			var label = lCase(trim(spec.label ?: ""));
+			if ( !listFind("supported,inferred,uncertain", label) ) throw(message="Invalid claim label");
+			var supportIds = spec.supportFragmentIds ?: [];
+			if ( !isArray(supportIds) || !supportIds.len() ) throw(message="Claims require current cited fragments");
+			var premises = spec.premises ?: [];
+			if ( !isArray(premises) ) throw(message="Premises must be an array");
+			if ( label == "inferred" && !premises.len() ) throw(message="Inferred claims require explicit premises");
+			if ( label != "inferred" && premises.len() ) throw(message="Only inferred claims may declare premises");
+
+			var claimCitations = [];
+			for ( var fragmentId in supportIds ) {
+				if ( !isInstanceOf(fragmentId, "java.lang.String") ) throw(message="Invalid fragment citation");
+				var fragment = fragmentById(arguments.retrieved, fragmentId);
+				var citation = {
+					id: "c" & citationIndex,
+					documentId: fragment.documentId,
+					revisionId: fragment.revisionId,
+					fragmentId: fragment.id,
+					location: fragment.location,
+					excerpt: left(fragment.text, 240),
+					provenance: fragment.provenance ?: {kind: "txt"},
+					sourceName: fragment.name ?: "",
+					status: "current"
+				};
+				citations.append(citation);
+				claimCitations.append(citation.id);
+				citationIndex++;
+			}
+			if ( label == "inferred" ) {
+				for ( var premise in premises ) if ( !isInstanceOf(premise, "java.lang.String") || !len(trim(premise)) ) throw(message="Inferred premises must be explicit text");
+			}
+			var claim = { text: trim(spec.text), label: label, citationIds: claimCitations, premises: label == "inferred" ? premises : [] };
+			claims.append(claim);
+			answerLines.append(claim.text);
+		}
+		return { ok: true, abstained: false, answerText: answerLines.toList(char(10)), claims: claims, citations: citations };
+	}
+
+	struct function buildStructuredFromRetrieved(required string modelText, required array retrieved) {
+		if ( trim(arguments.modelText) == "INSUFFICIENT_EVIDENCE" ) return abstain("model_reported_insufficient_evidence");
+		var payload = jsonDeserialize(arguments.modelText);
+		if ( !isStruct(payload) || !isArray(payload.claims) ) throw(message="Expected a JSON object with claims");
+		return buildFromRetrieved(arguments.modelText, arguments.retrieved, payload.claims);
+	}
+
+	struct function tryBuildFromRetrieved(required string modelText, required array retrieved, required array claimSpecs) {
+		try { return { ok: true, answer: buildFromRetrieved(arguments.modelText, arguments.retrieved, arguments.claimSpecs) }; }
+		catch ( any failure ) { return { ok: false, reason: left(toString(failure.message ?: "invalid_answer"), 240) }; }
+	}
+}

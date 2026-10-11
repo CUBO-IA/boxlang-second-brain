@@ -9,9 +9,10 @@ import type { Language, Member, Space } from "../lib/types";
 import { LogoMark } from "./Brand";
 import { LibraryPanel } from "./LibraryPanel";
 import { MemberManager } from "./MemberManager";
+import { ConversationPanel } from "./ConversationPanel";
 
 type NoticeKey = "" | "spaceCreated" | "sessionExpired" | "rateLimited" | "genericError";
-type View = "library" | "members";
+type View = "library" | "members" | "chat";
 
 export function WorkspacePanel({
   language,
@@ -75,7 +76,7 @@ export function WorkspacePanel({
   }
 
   const isAdmin = activeSpace?.role === "admin";
-  const view: View = isAdmin && requestedView === "members" ? "members" : "library";
+  const view: View = requestedView === "members" && !isAdmin ? "library" : requestedView;
   const roleName = isAdmin ? t.roleAdmin : activeSpace?.role === "editor" ? t.roleEditor : t.roleReader;
 
   return (
@@ -126,9 +127,9 @@ export function WorkspacePanel({
                 <NavIcon><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 5.2a3.2 3.2 0 0 1 0 5.6M17.5 14.3c2 .8 3.5 2.8 3.5 5.7" /></NavIcon>{t.navMembers}
               </button>
             )}
-            <span className="nav-item unavailable">
-              <NavIcon><path d="M4 5h16v11H9l-5 4z" /></NavIcon>{t.navChat}<small>{t.comingSoon}</small>
-            </span>
+            <button type="button" className={view === "chat" ? "nav-item active" : "nav-item"} aria-current={view === "chat" ? "page" : undefined} onClick={() => setRequestedView("chat")}>
+              <NavIcon><path d="M4 5h16v11H9l-5 4z" /></NavIcon>{t.navChat}
+            </button>
             <span className="nav-item unavailable">
               <NavIcon><circle cx="6" cy="7" r="2.5" /><circle cx="18" cy="9" r="2.5" /><circle cx="11" cy="18" r="2.5" /><path d="M8.3 7.6l7.3 1M7.2 9.2l2.8 6.6M16.6 11l-4.2 5.2" /></NavIcon>{t.navGraph}<small>{t.comingSoon}</small>
             </span>
@@ -144,8 +145,8 @@ export function WorkspacePanel({
             <header className="content-header">
               <div>
                 <p className="eyebrow">{activeSpace.name} / {roleName}</p>
-                <h1 id="active-space-title">{view === "members" ? t.memberTitle : t.navLibrary}</h1>
-                <p className="content-subtitle">{view === "members" ? t.memberIntro : t.librarySubtitle(activeSpace.name)}</p>
+                <h1 id="active-space-title">{view === "members" ? t.memberTitle : view === "chat" ? t.chatTitle : t.navLibrary}</h1>
+                <p className="content-subtitle">{view === "members" ? t.memberIntro : view === "chat" ? t.chatRetention : t.librarySubtitle(activeSpace.name)}</p>
               </div>
               <div className="content-actions">
                 {headerActions}
@@ -161,9 +162,18 @@ export function WorkspacePanel({
                 onRole={onChangeRole}
                 onRemove={onRemoveMember}
               />
+            ) : view === "chat" ? (
+              <ConversationPanel
+                key={`${activeSpace.id}-${activeSpace.role}-${csrfToken}`}
+                language={language}
+                space={activeSpace}
+                csrfToken={csrfToken}
+                onSessionExpired={onSessionExpired}
+                onForbidden={onLibraryForbidden}
+              />
             ) : (
               <LibraryPanel
-                key={activeSpace.id}
+                key={`${activeSpace.id}-${activeSpace.role}-${csrfToken}`}
                 language={language}
                 space={activeSpace}
                 csrfToken={csrfToken}
