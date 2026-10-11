@@ -1,23 +1,57 @@
-/** Deterministic pgvector isolation and document lifecycle checks. */
-class Probe {
+/** Exercises the installed bx-ai PostgresVectorMemory, not a replacement store. */
+class {
 	function vectorLifecycle() {
 		var table = "p00_" & lCase( replace( createUUID(), "-", "", "all" ) );
-		var quoted = '"#table#"';
-		queryExecute( "CREATE TEMP TABLE #quoted# (space_id text NOT NULL, document_id text NOT NULL, content text NOT NULL, embedding vector(3) NOT NULL, metadata jsonb NOT NULL, PRIMARY KEY(space_id, document_id))" );
+		var memory = new bxModules.bxai.models.memory.vector.PostgresVectorMemory( collection=table );
 		try {
-			queryExecute( "INSERT INTO #quoted# VALUES ('A','doc-a','same phrase', '[1,0,0]', jsonb_build_object('revision',1)), ('A','doc-sibling','same phrase', '[0,1,0]', '{}'::jsonb), ('B','doc-b','same phrase', '[1,0,0]', '{}'::jsonb)" );
-			var retrieved = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id = :space AND document_id IN (:docs) ORDER BY embedding <-> CAST('[1,0,0]' AS vector)", { space={value="A",sqltype="varchar"}, docs={value="doc-a",sqltype="varchar",list=true} } );
-			if ( retrieved.recordCount != 1 || retrieved.document_id[1] != "doc-a" ) throw( message="Space/document filter failed before retrieval" );
-			queryExecute( "UPDATE #quoted# SET content='replacement', metadata=jsonb_build_object('revision',2) WHERE space_id='A' AND document_id='doc-a'" );
-			var replaced = queryExecute( "SELECT content, metadata->>'revision' AS revision FROM #quoted# WHERE space_id='A' AND document_id='doc-a'" );
-			if ( replaced.content[1] != "replacement" || replaced.revision[1] != "2" ) throw( message="Replacement metadata check failed" );
-			queryExecute( "DELETE FROM #quoted# WHERE space_id='A' AND document_id='doc-a'" );
-			var old = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id='A' AND content='same phrase' AND document_id='doc-a'" );
-			var siblings = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id='A' AND document_id='doc-sibling'" );
-			if ( old.recordCount || siblings.recordCount != 1 ) throw( message="Delete affected stale data or sibling" );
-			return "OK: pre-retrieval space/document filters; replacement metadata; deletion; sibling preserved";
+			memory.configure( {
+				datasource: "secondBrain",
+				table: table,
+				collection: table,
+				dimensions: 3,
+				distanceFunction: "L2",
+				indexType: "HNSW"
+			} );
+			memory.storeDocument( "a-1", "same phrase A first", [ 0, 1, 0 ], { spaceId="A", documentId="doc-a", revision=1, fragment=1 } );
+			memory.storeDocument( "a-2", "same phrase A second", [ 0, 0.9, 0.1 ], { spaceId="A", documentId="doc-a", revision=1, fragment=2 } );
+			memory.storeDocument( "sibling-1", "same phrase sibling", [ 0, 0, 1 ], { spaceId="A", documentId="sibling", revision=1, fragment=1 } );
+			memory.storeDocument( "b-1", "same phrase B closer", [ 0.999, 0.001, 0 ], { spaceId="B", documentId="doc-b", revision=1, fragment=1 } );
+
+			var unrestricted = memory.findSimilar( [ 1, 0, 0 ], 10, {} );
+			if ( unrestricted[ 1 ].id != "b-1" ) throw( message="Synthetic B fixture must be nearest; got #unrestricted.map( ( row ) => row.id ).toList()#" );
+			// Test-only mutation switches prove each guard fails closed when omitted.
+			var fault = getSystemSetting( "P00_PROBE_FAULT", "" );
+			var isolated = memory.findSimilar( [ 1, 0, 0 ], 10, fault == "space" ? {} : { spaceId="A" } );
+			if ( isolated.len() != 3 || isolated.some( ( row ) => row.metadata.spaceId != "A" ) ) throw( message="Space filter missing from bx-ai retrieval" );
+			var isolatedContext = isolated.map( ( row ) => row.text ).toList( "\n" );
+			if ( findNoCase( "same phrase B closer", isolatedContext ) ) throw( message="Cross-space document would enter model context" );
+			var selected = memory.findSimilar( [ 1, 0, 0 ], 10, fault == "selection" ? { spaceId="A" } : { spaceId="A", documentId="doc-a" } );
+			if ( selected.len() != 2 || selected.some( ( row ) => row.metadata.documentId != "doc-a" ) ) throw( message="Selected document filter missing from bx-ai retrieval" );
+			var selectedContext = selected.map( ( row ) => row.text ).toList( "\n" );
+			if ( findNoCase( "sibling", selectedContext ) || findNoCase( "same phrase B closer", selectedContext ) ) throw( message="Unselected document would enter model context" );
+
+			var siblingBefore = memory.getById( "sibling-1" );
+			var bBefore = memory.getById( "b-1" );
+			var removed = fault == "replace" ? 0 : memory.removeWhere( { spaceId="A", documentId="doc-a" } );
+			if ( removed != 2 ) throw( message="Expected all old document fragments to be removed" );
+			memory.storeDocument( "a-1", "replacement A first", [ 0, 0, 1 ], { spaceId="A", documentId="doc-a", revision=2, fragment=1 } );
+			memory.storeDocument( "a-2", "replacement A second", [ 0.1, 0, 0.9 ], { spaceId="A", documentId="doc-a", revision=2, fragment=2 } );
+			var stale = memory.findSimilar( [ 1, 0, 0 ], 10, { spaceId="A", documentId="doc-a" } );
+			if ( stale.len() != 2 || stale.some( ( row ) => row.metadata.revision != 2 || findNoCase( "same phrase", row.text ) ) ) throw( message="Replacement left stale vectors/text or incorrect metadata" );
+			var replacementVector = memory.getById( "a-1" ).embedding;
+			if ( replacementVector[ 3 ] != 1 ) throw( message="Replacement did not replace the stored vector" );
+			var siblingAfter = memory.getById( "sibling-1" );
+			if ( siblingAfter.text != siblingBefore.text || siblingAfter.metadata.revision != siblingBefore.metadata.revision || siblingAfter.embedding.toList() != siblingBefore.embedding.toList() ) throw( message="Sibling changed during document replacement" );
+
+			if ( fault != "delete" && ( !memory.remove( "a-1" ) || !memory.remove( "a-2" ) ) ) throw( message="bx-ai remove failed for replacement fragments" );
+			if ( !memory.getById( "a-1" ).isEmpty() || !memory.getById( "a-2" ).isEmpty() ) throw( message="Deleted document still has vectors" );
+			var siblingAfterDelete = memory.getById( "sibling-1" );
+			var bAfterDelete = memory.getById( "b-1" );
+			if ( siblingAfterDelete.text != siblingBefore.text || siblingAfterDelete.metadata.revision != siblingBefore.metadata.revision || siblingAfterDelete.embedding.toList() != siblingBefore.embedding.toList() ) throw( message="Delete changed same-space sibling" );
+			if ( bAfterDelete.text != bBefore.text || bAfterDelete.metadata.spaceId != bBefore.metadata.spaceId || bAfterDelete.embedding.toList() != bBefore.embedding.toList() ) throw( message="Delete changed other-space data" );
+			return "OK: bx-ai PostgresVectorMemory; B nearest; pre-ranking space/document filters; 2-fragment replace/delete; sibling/B preserved";
 		} finally {
-			queryExecute( "DROP TABLE IF EXISTS #quoted#" );
+			queryExecute( "DROP TABLE IF EXISTS #table#", {}, { datasource="secondBrain" } );
 		}
 	}
 }

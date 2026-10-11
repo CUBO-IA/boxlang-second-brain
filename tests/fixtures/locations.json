@@ -1,6 +1,12 @@
-[
-  {"kind":"line","start":{"line":2},"end":{"line":2},"quote":"repeat: exact target"},
-  {"kind":"json","start":{"path":"policy.maxDays"},"end":{"path":"policy.maxDays"},"quote":"10"},
-  {"kind":"csv","start":{"row":3,"column":"limit"},"end":{"row":3,"column":"limit"},"quote":"repeat: exact target"},
-  {"kind":"json","start":{"path":"policy.maxDays"},"end":{"path":"policy.maxDays"},"quote":"10"}
-]
+{
+  "documents": [
+    {"id":"md-1","format":"Markdown","text":"Title\nrepeat phrase\nrepeat phrase","location":{"kind":"line","start":{"line":3,"offset":1},"end":{"line":3,"offset":13},"quote":"repeat phrase"}},
+    {"id":"txt-1","format":"TXT","text":"Header\nExact TXT target\nExact TXT target","location":{"kind":"line","start":{"line":3,"offset":1},"end":{"line":3,"offset":16},"quote":"Exact TXT target"}},
+    {"id":"json-1","format":"JSON","text":"{\"policy\":{\"maxDays\":10},\"other\":{\"maxDays\":10}}","location":{"kind":"json-path","start":{"path":"policy.maxDays"},"end":{"path":"policy.maxDays"},"quote":"10"}},
+    {"id":"code-1","format":"JavaScript","text":"const first = 'same';\nconst target = 'Exact CODE target';\nconst again = 'Exact CODE target';","location":{"kind":"line","start":{"line":3,"offset":16},"end":{"line":3,"offset":32},"quote":"Exact CODE target"}},
+    {"id":"csv-1","format":"CSV","text":"category,limit\ntravel,250\nmeals,40","location":{"kind":"csv-cell","start":{"row":3,"column":"limit"},"end":{"row":3,"column":"limit"},"quote":"40"}},
+    {"id":"pdf-1","format":"PDF","text":"Page one intro\nExact PDF target","location":{"kind":"pdf-page","start":{"page":2},"end":{"page":2},"quote":"Exact PDF target"}},
+    {"id":"docx-1","format":"DOCX","text":"Header repeated quote\nExact DOCX target\nExact DOCX target","location":{"kind":"docx-paragraph","start":{"paragraph":2,"offset":1},"end":{"paragraph":2,"offset":17},"quote":"Exact DOCX target"}},
+    {"id":"xlsx-1","format":"XLSX","text":"Limits!A1=category\nLimits!B2=250\nLimits!C3=repeat target","location":{"kind":"xlsx-cell","start":{"sheet":"Limits","cell":"B2"},"end":{"sheet":"Limits","cell":"B2"},"quote":"250"}}
+  ]
+}

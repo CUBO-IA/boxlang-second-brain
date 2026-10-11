@@ -1,10 +1,40 @@
-// Explicitly opt-in. No implicit retries. Caller must set a hard USD ceiling
-// no greater than 1 and both explicit credentials; never print credentials.
-if ( !structKeyExists( server.system.environment, "P00_ALLOW_PROVIDER_CALLS" ) || server.system.environment.P00_ALLOW_PROVIDER_CALLS != "YES" ) {
-	throw( message="Blocked: set P00_ALLOW_PROVIDER_CALLS=YES to opt in" );
+// One request per probe, no retries. Calls require explicit opt-in, a key,
+// caller-supplied current price rates, and a hard combined ceiling <= USD 1.
+env = server.system.environment;
+if ( ( env.P00_ALLOW_PROVIDER_CALLS ?: "" ) != "YES" ) {
+	println( "BLOCKED: opt in with P00_ALLOW_PROVIDER_CALLS=YES; no provider request made" );
+	abort;
 }
-if ( !structKeyExists( server.system.environment, "P00_MAX_USD" ) || val( server.system.environment.P00_MAX_USD ) <= 0 || val( server.system.environment.P00_MAX_USD ) > 1 ) {
-	throw( message="Blocked: P00_MAX_USD must be > 0 and <= 1 before calls" );
+if ( !( env.OPENAI_API_KEY ?: "" ).len() ) {
+	println( "BLOCKED: OPENAI_API_KEY absent; no provider request made" );
+	abort;
 }
-if ( !structKeyExists( server.system.environment, "OPENAI_API_KEY" ) || !len( server.system.environment.OPENAI_API_KEY ) ) throw( message="Blocked: OPENAI_API_KEY absent; no provider request made" );
-throw( message="Not implemented: bx-ai 3.5.0 call contract must be confirmed before any real request" );
+ceiling = val( env.P00_MAX_USD ?: 0 );
+chatInRate = val( env.P00_CHAT_INPUT_USD_PER_MILLION ?: 0 );
+chatOutRate = val( env.P00_CHAT_OUTPUT_USD_PER_MILLION ?: 0 );
+embeddingRate = val( env.P00_EMBED_USD_PER_MILLION ?: 0 );
+if ( ceiling <= 0 || ceiling > 1 || chatInRate <= 0 || chatOutRate <= 0 || embeddingRate <= 0 ) {
+	println( "BLOCKED: require USD ceiling in (0,1] and positive caller-supplied current USD/M-token rates; no request made" );
+	abort;
+}
+// Conservative fixed budgets: <=64 input tokens for each request and 32 output tokens.
+estimated = ( 64 * chatInRate + 32 * chatOutRate + 64 * embeddingRate ) / 1000000;
+if ( estimated > ceiling ) {
+	println( "BLOCKED: conservative combined cost estimate exceeds P00_MAX_USD; no request made" );
+	abort;
+}
+key = env.OPENAI_API_KEY;
+chat = aiChat(
+	"Reply with exactly: P00_PROVIDER_PROBE_OK",
+	{ model: "gpt-6-luna", max_completion_tokens: 32 },
+	{ provider: "openai", apiKey: key, timeout: 30, returnFormat: "raw", logRequest: false, logResponse: false }
+);
+embedding = aiEmbed(
+	"synthetic phase zero embedding probe",
+	{ model: "text-embedding-3-small" },
+	{ provider: "openai", apiKey: key, timeout: 30, returnFormat: "raw", logRequest: false, logResponse: false }
+);
+vector = embedding.data[ 1 ].embedding;
+if ( vector.len() != 1536 ) throw( message="Embedding dimensions differ from proposed 1536: #vector.len()#" );
+println( "CHAT response=#chat.choices[1].message.content# usage=#chat.usage ?: {}# model=gpt-6-luna endpoint=OpenAI Chat Completions timeout=30s retries=0 estimatedMaxUSD=#estimated#" );
+println( "EMBED model=text-embedding-3-small dimensions=#vector.len()# usage=#embedding.usage ?: {}# estimatedMaxUSD=#estimated#" );

@@ -1,3 +1,5 @@
+import Feasibility from "./feasibility";
+
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
@@ -35,6 +37,7 @@ export default async function Home() {
       </section>
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Recarga completa para volver a consultar BoxLang. */}
       <a href="/">Comprobar de nuevo</a>
+      <Feasibility />
     </main>
   );
 }

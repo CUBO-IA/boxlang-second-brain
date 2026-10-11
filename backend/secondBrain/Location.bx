@@ -7,7 +7,28 @@ class Location {
 
 	function init( required struct value ) {
 		if ( !structKeyExists( arguments.value, "kind" ) || !structKeyExists( arguments.value, "start" ) || !structKeyExists( arguments.value, "end" ) || !structKeyExists( arguments.value, "quote" ) ) throw( message="Location requires kind, start, end and quote" );
-		if ( !len( arguments.value.quote ) || !structCount( arguments.value.start ) || !structCount( arguments.value.end ) ) throw( message="Location must identify a non-empty source range" );
+		if ( ![ "line", "json-path", "csv-cell", "xlsx-cell", "pdf-page", "docx-paragraph" ].contains( arguments.value.kind ) || !len( arguments.value.quote ) ) throw( message="Unsupported location kind or empty quote" );
+		var start = arguments.value.start;
+		var end = arguments.value.end;
+		switch ( arguments.value.kind ) {
+			case "line":
+			case "docx-paragraph":
+				var key = arguments.value.kind == "line" ? "line" : "paragraph";
+				if ( !start.keyExists( key ) || !end.keyExists( key ) || start[ key ] < 1 || end[ key ] != start[ key ] || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid line/paragraph range" );
+				break;
+			case "json-path":
+				if ( !start.keyExists( "path" ) || !end.keyExists( "path" ) || !len( start.path ) || start.path != end.path ) throw( message="Invalid JSON path" );
+				break;
+			case "csv-cell":
+				if ( !start.keyExists( "row" ) || !start.keyExists( "column" ) || start.row < 1 || !len( start.column ) || start.row != end.row || start.column != end.column ) throw( message="Invalid CSV cell" );
+				break;
+			case "xlsx-cell":
+				if ( !start.keyExists( "sheet" ) || !start.keyExists( "cell" ) || !len( start.sheet ) || !reFind( "^[A-Z]+[1-9][0-9]*$", start.cell ) || start.sheet != end.sheet || start.cell != end.cell ) throw( message="Invalid XLSX cell" );
+				break;
+			case "pdf-page":
+				if ( !start.keyExists( "page" ) || !end.keyExists( "page" ) || start.page < 1 || end.page != start.page ) throw( message="Invalid PDF page" );
+				break;
+		}
 		variables.kind = arguments.value.kind;
 		variables.start = arguments.value.start;
 		variables.end = arguments.value.end;

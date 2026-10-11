@@ -1,5 +1,3 @@
-# Location probe
-
-repeat: exact target
-
-repeat: exact target
+Title
+repeat phrase
+repeat phrase

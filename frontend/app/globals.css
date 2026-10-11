@@ -23,4 +23,25 @@ section { margin: 32px 0; padding: 20px 24px; background: white; border-left: 4p
 pre { overflow-x: auto; font: 0.95rem/1.6 ui-monospace, monospace; }
 a { color: var(--accent); text-underline-offset: 4px; }
 a:focus-visible { outline: 3px solid var(--accent); outline-offset: 6px; }
+.feasibility { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(250px, .8fr); gap: 18px; margin-top: 48px; }
+.viewer, .graph-panel { min-width: 0; padding: 22px; background: #fff; border: 1px solid #c6d3df; }
+.panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid #d8e0e7; margin-bottom: 18px; }
+.panel-heading span, .graph-panel small { color: var(--muted); font-size: .75rem; }
+.eyebrow { color: var(--accent); font: 700 .72rem ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.viewer label { display: block; margin-bottom: 6px; font-size: .85rem; font-weight: 650; }
+.viewer select { width: 100%; padding: 10px; border: 1px solid #8da2b5; background: white; color: var(--ink); }
+.location-chip { display: inline-block; padding: 4px 8px; background: #e4f1fa; color: #174c71; font: .78rem ui-monospace, monospace; }
+.viewer pre { padding: 16px; background: #112538; color: #dce9f3; white-space: pre-wrap; overflow-wrap: anywhere; }
+.viewer pre code { font: .86rem/1.8 ui-monospace, monospace; }
+.citation { font-size: .85rem; }
+.citation span { color: var(--muted); }
+.graph-root { padding: 12px; background: #16324b; color: #fff; font-weight: 650; }
+.graph-panel ul { list-style: none; padding: 0; margin: 0; }
+.graph-panel li { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; align-items: center; border-bottom: 1px solid #d8e0e7; padding: 10px 4px; }
+.graph-panel li span { font: .88rem ui-monospace, monospace; }
+.graph-panel li small { grid-column: 1 / -1; }
+.graph-panel button { padding: 5px 8px; color: var(--accent); background: transparent; border: 1px solid #9cb1c4; cursor: pointer; }
+.graph-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.graph-panel button:focus-visible, .viewer select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 480px) { main { margin: 5vh auto; padding: 24px; } }
+@media (max-width: 720px) { .feasibility { grid-template-columns: 1fr; } .panel-heading { align-items: flex-start; flex-direction: column; gap: 0; } }

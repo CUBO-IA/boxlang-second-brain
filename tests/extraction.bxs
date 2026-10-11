@@ -1,0 +1,69 @@
+// Real fixture smoke for bx-ai's installed loaders. OOXML checks below are
+// deliberately fixture-scoped because premium bx-word/bx-spreadsheet loaders
+// are not installed in this environment.
+root = "/modules/second-brain/tests/fixtures/";
+checks = [];
+markdown = new bxModules.bxai.models.loaders.MarkdownLoader( root & "locations.md" ).doLoad()[ 1 ].getContent();
+markdownLines = listToArray( markdown, char( 10 ), true );
+if ( markdownLines[ 2 ] != "repeat phrase" || markdownLines[ 3 ] != markdownLines[ 2 ] ) throw( message="bx-ai MarkdownLoader line 3/repeated citation mismatch" );
+checks.append( "MD=bx-ai MarkdownLoader" );
+text = new bxModules.bxai.models.loaders.TextLoader( root & "locations.txt" ).doLoad()[ 1 ].getContent();
+textLines = listToArray( text, char( 10 ), true );
+if ( textLines[ 1 ] != "Header" || textLines[ 2 ] != "Exact TXT target" || textLines[ 3 ] != textLines[ 2 ] ) throw( message="bx-ai TextLoader repeated quote mismatch: #text#" );
+checks.append( "TXT/code=bx-ai TextLoader" );
+codeLines = listToArray( new bxModules.bxai.models.loaders.TextLoader( root & "locations.js" ).doLoad()[ 1 ].getContent(), char( 10 ), true );
+if ( codeLines[ 2 ] != "const target = 'Exact CODE target';" || codeLines[ 3 ] != "const again = 'Exact CODE target';" ) throw( message="bx-ai TextLoader JavaScript line citation mismatch" );
+jsonText = new bxModules.bxai.models.loaders.JSONLoader( root & "locations.jsondata" ).doLoad()[ 1 ].getContent();
+if ( !findNoCase( "policy.maxDays: 10", jsonText ) || !findNoCase( "other.maxDays: 10", jsonText ) ) throw( message="bx-ai JSONLoader path values missing" );
+checks.append( "JSON=bx-ai JSONLoader" );
+csvText = new bxModules.bxai.models.loaders.CSVLoader( root & "locations.csv" ).doLoad()[ 1 ].getContent();
+if ( !findNoCase( "meals", csvText ) || !findNoCase( "40", csvText ) ) throw( message="bx-ai CSVLoader row/column values missing: #csvText#" );
+checks.append( "CSV=bx-ai CSVLoader" );
+pdfContent = new bxModules.bxai.models.loaders.PDFLoader( root & "locations.pdf" ).doLoad()[ 1 ].getContent();
+if ( !findNoCase( "Page one intro", pdfContent ) || !findNoCase( "Exact PDF target", pdfContent ) ) throw( message="bx-ai PDFLoader failed to extract fixture" );
+pdf = createObject( "java", "org.apache.pdfbox.Loader" ).loadPDF( createObject( "java", "java.io.File" ).init( root & "locations.pdf" ) );
+try {
+	stripper = createObject( "java", "org.apache.pdfbox.text.PDFTextStripper" ).init();
+	stripper.setStartPage( 2 ); stripper.setEndPage( 2 );
+	page2 = stripper.getText( pdf );
+	if ( !findNoCase( "Exact PDF target", page2 ) || findNoCase( "Page one intro", page2 ) ) throw( message="PDF page coordinate does not resolve exact citation" );
+} finally { pdf.close(); }
+checks.append( "PDF=bx-ai PDFLoader + PDFBox page 2 exact citation" );
+
+temp = getTempDirectory() & "p00-fixtures-" & replace( createUUID(), "-", "", "all" );
+directoryCreate( temp );
+try {
+	// Real minimal OOXML ZIP fixtures decoded to writable temp, never the source mount.
+	fileWrite( temp & "/probe.docx", binaryDecode( fileRead( root & "locations.docx.b64" ), "base64" ) );
+	fileWrite( temp & "/probe.xlsx", binaryDecode( fileRead( root & "locations.xlsx.b64" ), "base64" ) );
+	zip = createObject( "java", "java.util.zip.ZipFile" ).init( temp & "/probe.docx" );
+	try {
+		scanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "word/document.xml" ) ), "UTF-8" );
+		xml = scanner.useDelimiter( "\\A" ).next();
+		parts = createObject( "java", "java.util.Arrays" ).asList( xml.split( "</w:p>" ) );
+		paragraph2 = reReplace( parts.get( 1 ), "<[^>]+>", "", "all" );
+		paragraph3 = reReplace( parts.get( 2 ), "<[^>]+>", "", "all" );
+		if ( paragraph2 != "Exact DOCX target" || paragraph3 != paragraph2 ) throw( message="DOCX paragraph coordinate/repeated quote mismatch: #paragraph2# / #paragraph3#" );
+	} finally { zip.close(); }
+	checks.append( "DOCX=fixture-scoped OOXML ZIP/XML reader; paragraph 2 exact/repeated" );
+
+	zip = createObject( "java", "java.util.zip.ZipFile" ).init( temp & "/probe.xlsx" );
+	try {
+		workbookScanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "xl/workbook.xml" ) ), "UTF-8" );
+		workbook = workbookScanner.useDelimiter( "\\A" ).next();
+		relationsScanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "xl/_rels/workbook.xml.rels" ) ), "UTF-8" );
+		relations = relationsScanner.useDelimiter( "\\A" ).next();
+		if ( !find( 'name="Limits"', workbook ) || !find( 'r:id="rId1"', workbook ) || !find( 'Target="worksheets/sheet1.xml"', relations ) ) throw( message="XLSX sheet name/relationship does not locate Limits fixture" );
+		scanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "xl/worksheets/sheet1.xml" ) ), "UTF-8" );
+		sheet = scanner.useDelimiter( "\\A" ).next();
+		cell = "<c r=""B2""><v>";
+		at = find( cell, sheet );
+		value = mid( sheet, at + len( cell ), 3 );
+		if ( at == 0 || value != "250" ) throw( message="XLSX Limits!B2 exact cell mismatch" );
+	} finally { zip.close(); }
+	checks.append( "XLSX=fixture-scoped OOXML ZIP/XML reader; Limits!B2=250" );
+} finally {
+	directoryDelete( temp, true );
+}
+
+println( "OK: " & checks.toList( "; " ) );

@@ -1,0 +1,14 @@
+import secondBrain.Location;
+
+function rejectsLocation( required struct value ) {
+	try { new Location( arguments.value ); return false; }
+	catch ( any e ) { return true; }
+}
+
+valid = new Location( { kind="line", start={ line=2, offset=5 }, end={ line=2, offset=17 }, quote="repeat phrase" } );
+if ( valid.toStruct().start.line != 2 ) throw( message="Valid line citation rejected" );
+if ( !rejectsLocation( { kind="line", start={ line=-1, offset=1 }, end={ line=-1, offset=13 }, quote="repeat phrase" } ) ) throw( message="Negative line accepted" );
+if ( !rejectsLocation( { kind="line", start={ line=2, offset=8 }, end={ line=2, offset=4 }, quote="bad" } ) ) throw( message="Reversed line range accepted" );
+if ( !rejectsLocation( { kind="unknown", start={ x=1 }, end={ x=1 }, quote="bad" } ) ) throw( message="Unknown kind accepted" );
+if ( !rejectsLocation( { kind="xlsx-cell", start={ sheet="Limits", cell="B0" }, end={ sheet="Limits", cell="B0" }, quote="0" } ) ) throw( message="Invalid spreadsheet cell accepted" );
+println( "OK: Location validates supported kind, positive coordinates, ordered range and exact quote length" );
