@@ -5,15 +5,17 @@ import Link from "next/link";
 
 import { apiRequest, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
-import type { AuthResponse, Language, Member, Space, User } from "../lib/types";
+import { useLanguage } from "../lib/language";
+import type { AuthResponse, Member, Space, User } from "../lib/types";
 import { AuthPanel } from "./AuthPanel";
+import { LanguageSwitch, LogoMark } from "./Brand";
 import { WorkspacePanel } from "./WorkspacePanel";
 
 type AuthNoticeKey = "" | "genericError" | "sessionExpired";
-type GlobalNoticeKey = "" | "genericError" | "membershipRemoved" | "forbidden" | "processMember" | "roleUpdated" | "memberRemoved" | "requestDenied";
+type GlobalNoticeKey = "" | "genericError" | "membershipRemoved" | "forbidden" | "processMember" | "roleUpdated" | "memberRemoved" | "requestDenied" | "libraryForbidden";
 
 export function SecondBrainApp({ backendReady }: { backendReady: boolean }) {
-  const [language, setLanguage] = useState<Language>("es");
+  const [language, setLanguage] = useLanguage();
   const [user, setUser] = useState<User | null>(null);
   const [csrfToken, setCsrfToken] = useState("");
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -28,10 +30,6 @@ export function SecondBrainApp({ backendReady }: { backendReady: boolean }) {
   const requestEpoch = useRef(0);
   const selectedSpaceRef = useRef<number | null>(null);
   const t = copy[language];
-
-  useEffect(() => {
-    document.documentElement.lang = language;
-  }, [language]);
 
   const handleSessionExpiry = useCallback(() => {
     setUser(null);
@@ -54,6 +52,14 @@ export function SecondBrainApp({ backendReady }: { backendReady: boolean }) {
     setMembers([]);
     requestEpoch.current++;
     setGlobalNotice("membershipRemoved");
+  }, []);
+
+  const handleLibraryForbidden = useCallback(() => {
+    setActiveSpace(null);
+    setMembers([]);
+    requestEpoch.current++;
+    setRefreshVersion((version) => version + 1);
+    setGlobalNotice("libraryForbidden");
   }, []);
 
   useEffect(() => {
@@ -295,57 +301,78 @@ export function SecondBrainApp({ backendReady }: { backendReady: boolean }) {
     }
   }
 
-  return (
-    <>
-      <header className="topbar">
-        <Link className="brand-lockup" href="/" aria-label={t.brand}>
-          <span className="brand-mark" aria-hidden="true">sb</span>
-          <span><strong>{t.brand}</strong><small>{t.tagline}</small></span>
-        </Link>
-        <div className="topbar-actions">
-          <span className={backendReady ? "backend-pill ready" : "backend-pill down"} data-backend-status={backendReady ? "ok" : "error"}>
-            <span className="health-dot" aria-hidden="true" />{backendReady ? t.backendReady : t.backendDown}
-          </span>
-          <Link className="quiet-link" href="/feasibility">{t.feasibility}</Link>
-          <button className="language-toggle" type="button" aria-label={language === "es" ? "Switch to English" : "Cambiar a español"} onClick={() => setLanguage(language === "es" ? "en" : "es")}>
-            {language === "es" ? "EN" : "ES"}
-          </button>
-        </div>
-      </header>
-      <main className="app-main">
-        {authLoading ? (
-          <div className="loading-card" role="status">{t.busy}</div>
-        ) : user ? (
-          <>
-            <div className="account-strip">
-              <p><span className="eyebrow">{t.account}</span><strong>{user.email}</strong></p>
-              <button className="button quiet" type="button" onClick={() => void logout()} disabled={logoutBusy}>
-                {logoutBusy ? t.busy : t.logout}
-              </button>
-            </div>
-            {globalNotice && <p className="global-notice" role="status" aria-live="polite">{t[globalNotice]}</p>}
-            <WorkspacePanel
-              language={language}
-              spaces={spaces}
-              activeSpace={activeSpace}
-              members={members}
-              onSelect={selectSpace}
-              onCreate={createSpace}
-              onRefresh={refreshAccess}
-              onAddMember={addMember}
-              onChangeRole={changeRole}
-              onRemoveMember={removeMember}
-            />
-          </>
-        ) : (
-          <AuthPanel language={language} notice={authNotice} onAuthenticated={acceptAuth} />
-        )}
+  const backendPill = (
+    <span className={backendReady ? "backend-pill ready" : "backend-pill down"} data-backend-status={backendReady ? "ok" : "error"}>
+      <span className="health-dot" aria-hidden="true" />{backendReady ? t.backendReady : t.backendDown}
+    </span>
+  );
+  const languageSwitch = <LanguageSwitch language={language} onChange={setLanguage} />;
+
+  if (authLoading) {
+    return (
+      <main className="app-loading">
+        <div className="loading-card" role="status">{t.busy}</div>
+        {backendPill}
       </main>
-      <footer className="page-footer">
-        <span>Out of the Box</span>
-        <span aria-hidden="true">·</span>
-        <Link href="/feasibility">{t.developerRoute}</Link>
-      </footer>
-    </>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="auth-screen">
+        <section className="auth-brand" aria-labelledby="welcome-title">
+          <Link className="auth-logo" href="/">
+            <LogoMark size={40} inverse />
+            <span>{t.brand}</span>
+          </Link>
+          <div className="auth-slogan">
+            <h1 id="welcome-title">{t.sloganLead} <span>{t.sloganAccent}</span></h1>
+            <p>{t.authPitch}</p>
+          </div>
+          <ul className="auth-points">
+            <li><strong>{t.pointCitationTitle}</strong><span>{t.pointCitationText}</span></li>
+            <li><strong>{t.pointConflictTitle}</strong><span>{t.pointConflictText}</span></li>
+            <li><strong>{t.pointFactsTitle}</strong><span>{t.pointFactsText}</span></li>
+          </ul>
+        </section>
+        <section className="auth-side">
+          <div className="auth-top">{backendPill}{languageSwitch}</div>
+          <AuthPanel language={language} notice={authNotice} onAuthenticated={acceptAuth} />
+          <p className="auth-footnote">{t.openaiNotice}</p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <WorkspacePanel
+      language={language}
+      spaces={spaces}
+      activeSpace={activeSpace}
+      members={members}
+      csrfToken={csrfToken}
+      notice={globalNotice ? t[globalNotice] : ""}
+      headerActions={languageSwitch}
+      sidebarFooter={(
+        <>
+          <p className="sidebar-account"><span className="eyebrow">{t.account}</span><strong>{user.email}</strong></p>
+          <button className="button quiet full-width" type="button" onClick={() => void logout()} disabled={logoutBusy}>
+            {logoutBusy ? t.busy : t.logout}
+          </button>
+          <div className="sidebar-meta">
+            {backendPill}
+            <Link className="quiet-link" href="/feasibility">{t.feasibility}</Link>
+          </div>
+        </>
+      )}
+      onSelect={selectSpace}
+      onCreate={createSpace}
+      onRefresh={refreshAccess}
+      onAddMember={addMember}
+      onChangeRole={changeRole}
+      onRemoveMember={removeMember}
+      onSessionExpired={handleSessionExpiry}
+      onLibraryForbidden={handleLibraryForbidden}
+    />
   );
 }
