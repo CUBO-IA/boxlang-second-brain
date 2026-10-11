@@ -65,6 +65,19 @@ P01_RUN=phase01-check-01 docker compose -p second-brain-phase01 exec -e P01_RUN=
 
 Desde el contenedor, el CLI sigue disponible con `docker compose -p second-brain-phase01 exec boxlang boxlang`. Desde otros contenedores PostgreSQL está en `postgres:5432`; la datasource BoxLang es `secondBrain`. Los archivos de `frontend/app` y `backend` se montan para desarrollo; reconstruye si cambias dependencias.
 
+## Probe opt-in de OpenAI
+
+La clave opcional se pasa **solo al contenedor BoxLang**, nunca al frontend. Compose configura `P00_ALLOW_PROVIDER_CALLS=NO` por defecto; no hay llamadas al iniciar servicios. Para habilitar la prueba manualmente, agrega `OPENAI_API_KEY` al `.env` privado e ignorado de este worktree; no copies la clave al repo, a este chat ni a logs. Luego recrea BoxLang para cargar el entorno y habilita la prueba únicamente al ejecutar el script:
+
+```bash
+docker compose -p second-brain-phase01 up -d --no-deps boxlang
+P00_ALLOW_PROVIDER_CALLS=YES docker compose -p second-brain-phase01 exec -e P00_ALLOW_PROVIDER_CALLS=YES boxlang boxlang tests/provider.bxs
+```
+
+El `.env.example` deja `P00_MAX_USD=1` y fecha/fuente/tarifas explícitas. Según el precio **Standard** publicado a **2026-10-11**, el probe actual usa `gpt-6-luna`: USD 0.10/M tokens de entrada y USD 0.50/M de salida; `text-embedding-3-small`: USD 0.02/M de entrada. Referencias: [modelo GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios API](https://developers.openai.com/api/docs/pricing) y [modelos de embeddings](https://developers.openai.com/api/docs/guides/embeddings). Las tarifas pueden variar por modalidad y procesamiento regional; vuelve a confirmar fecha, tipo de endpoint y tarifa antes de permitir llamadas.
+
+Los docs públicos identifican ambos modelos y el endpoint de Chat Completions para `gpt-6-luna`; **no se verificó acceso de esta organización/cuenta** porque el proceso actual no tiene `OPENAI_API_KEY`. Por eso no se ejecutó el probe ni se cambió de modelo. El guard requiere además el opt-in explícito, tarifas/fecha/referencia válidas y un techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
+
 ## MCP y documentación
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
@@ -73,4 +86,4 @@ Estado de seguimiento: fase 01 **En curso** hasta revisión independiente; fase 
 
 ## Alcance futuro, no implementado
 
-Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. Proveedor/modelos, dimensiones vectoriales y despliegue productivo siguen pendientes; no se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. El probe de modelos es independiente de esa funcionalidad y no implica integración productiva; acceso de cuenta, respuestas/uso reales y dimensiones/operación siguen pendientes. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.

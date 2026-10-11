@@ -199,7 +199,13 @@ export function SecondBrainApp({ backendReady }: { backendReady: boolean }) {
   }
 
   async function createSpace(name: string) {
-    const result = await apiRequest<{ space: Space }>("/api/spaces", jsonMutation("POST", { name }));
+    let result: { space: Space };
+    try {
+      result = await apiRequest<{ space: Space }>("/api/spaces", jsonMutation("POST", { name }));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) handleSessionExpiry();
+      throw error;
+    }
     setSpaces((current) => [...current, result.space]);
     setGlobalNotice("");
     setActiveSpace(null);

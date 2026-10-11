@@ -122,3 +122,15 @@ Límites deliberados: el throttle es por correo y no bloquea un spray distribuid
 Fase 01 no se marca Verificada ni completa: queda **En curso** hasta la revisión independiente de Sol. No hubo push, merge, apagado de servicios ni cambios a los documentos de fases 02–09 o `DESIGN.md`.
 
 Este informe se incorpora en un commit posterior, solo documental; su hash se devuelve con el commit de implementación.
+
+## Ronda 1 — R1 (2026-10-11)
+
+Sol confirmó R1 P2: `createSpace` no procesaba `401` mediante `handleSessionExpiry`, a diferencia de los demás flujos protegidos. Se corrigió en el caller compartido `SecondBrainApp.tsx`: el `catch` limpia el estado protegido y después vuelve a lanzar el error para que `WorkspacePanel` presente el aviso de sesión expirada. No se modificó el backend ni el manejo de errores de los demás callers.
+
+Comprobación focalizada real en Chrome DevTools (`http://127.0.0.1:3002`): cuenta/espacio sintéticos; logout HTTP `200` desde otra pestaña; después, submit «Crear espacio» en la pestaña que conservaba el panel. `POST /api/spaces` devolvió `401` y expiró la cookie; inmediatamente desaparecieron espacios, panel y miembros, y quedó visible el formulario de inicio de sesión con «Tu sesión caducó. Inicia sesión de nuevo.». La petición «Must not create» no creó espacio. Se eliminó la única cuenta sintética con `P01_RUN=sol-review-20261011` mediante `tests/phase01-cleanup.bxs`.
+
+Comprobaciones de esta ronda: `docker compose -p second-brain-phase01 exec frontend pnpm exec tsc --noEmit` (exit 0); `docker compose -p second-brain-phase01 config -q` (exit 0); `git diff --check` (exit 0). No se repitieron lint, build ni P01.1–P01.7.
+
+Wiring opcional de proveedor: `OPENAI_API_KEY` se expone únicamente al servicio BoxLang; llamadas deshabilitadas por defecto y el script existente requiere el opt-in `P00_ALLOW_PROVIDER_CALLS=YES`, fecha/fuente/tarifas explícitas y límite de USD 1. README documenta la configuración local. La documentación oficial consultada lista `gpt-6-luna`, `text-embedding-3-small` y tarifas Standard (revisadas el 2026-10-11); se registraron en `.env.example` junto con fecha y URL de referencia, no como garantía de tarifa futura. No se hicieron llamadas: la clave no está configurada ni en el `.env` privado del worktree ni en el proceso BoxLang. La verificación de documentación no comprueba permisos, facturación o cuota de esta cuenta; validar esos puntos requiere la clave y el opt-in explícito del usuario. No se usó clave sentinel ni se imprimió secreto alguno.
+
+Fase 00 sigue **Bloqueada** por evidencia externa. Esta corrección no marca fase 01 como verificada: permanece **En curso** a la espera de la siguiente revisión independiente de Sol. `DESIGN.md` y planes 02–09 permanecen intactos; sin push, merge ni apagado de servicios.
