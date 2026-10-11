@@ -82,8 +82,8 @@ El probe sintético ejecutado en el worktree validó las respuestas de chat y em
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Estado de seguimiento: fase 01 **Verificada** con gate aprobado por Sol; fase 00 continúa **Bloqueada** por roundtrip vectorial y evidencia externa pendiente. Ver [plan e informe de fase 01](docs/plan/01-cuentas-espacios-y-permisos.md), [evidencia de proveedor](docs/plan/evidence/provider-phase00.md) y [verificación](docs/plan/verificacion.md).
+Estado de seguimiento: fases **00** y **01** **Verificadas**. Ver [cierre de fase 00](docs/plan/evidence/phase00-closure.md), [fase 01](docs/plan/01-cuentas-espacios-y-permisos.md), [evidencia de proveedor](docs/plan/evidence/provider-phase00.md) y [verificación](docs/plan/verificacion.md).
 
 ## Alcance futuro, no implementado
 
-Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. El probe de modelos es independiente de esa funcionalidad y no implica integración productiva; acceso de cuenta, respuestas/uso reales y dimensiones/operación siguen pendientes. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+Biblioteca/tareas (02), ingesta/chat con evidencia (03+), contradicciones, grafo y operación productiva siguen en fases posteriores. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
