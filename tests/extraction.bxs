@@ -57,6 +57,34 @@ assertExtractorRejects("locations-missing-ref.xlsx","Invalid XLSX cell reference
 assertExtractorRejects("locations-fractional-shared.xlsx","Invalid XLSX shared string index");
 assertExtractorRejects("locations-out-of-range-shared.xlsx","out of bounds");
 assertExtractorRejects("locations-formula.xlsx","outside the supported subset");
+
+inlineRunsFile=materializeXlsxFixture("locations-inline-runs.xlsx.b64");
+try {
+	inlineRuns=extractor.xlsxCells(inlineRunsFile.getAbsolutePath(),"Limits");
+	inlineValue=inlineRuns.filter((cell)=>cell.cell=="A1");
+	if(inlineValue.len()!=1 || inlineValue[1].value!="A & B") throw(message="XLSX inline rich runs did not concatenate and decode to A & B");
+} finally { inlineRunsFile.delete(); }
+checks.append("XLSX inline rich-text runs concatenate to literal A & B through full ZIP extraction");
+
+unsupportedTypeFile=materializeXlsxFixture("locations-unsupported-value.xlsx.b64");
+try {
+	assertExtractorRejectsPath(unsupportedTypeFile.getAbsolutePath(),"Unsupported XLSX cell type unsupported at A1");
+} finally { unsupportedTypeFile.delete(); }
+checks.append("XLSX rejects unsupported cell type before reading its <v> value");
 checks.append("XLSX rejects B0, missing cell refs, fractional/out-of-range shared indices and unsupported formulas");
+
+function materializeXlsxFixture(required string fixture){
+	var file=createObject("java","java.io.File").createTempFile("p00-xlsx-",".xlsx");
+	var stream=createObject("java","java.io.FileOutputStream").init(file);
+	try { stream.write(createObject("java","java.util.Base64").getDecoder().decode(trim(fileRead(root & arguments.fixture)))); }
+	catch(any failure){ file.delete(); rethrow; }
+	finally { stream.close(); }
+	return file;
+}
+
+function assertExtractorRejectsPath(required string path, required string expected){
+	try { extractor.xlsxCells(arguments.path,"Limits"); throw(message="Accepted malformed XLSX #arguments.path#"); }
+	catch(any failure){ if(!findNoCase(arguments.expected,failure.message)) rethrow; }
+}
 
 println( "OK: " & checks.toList( "; " ) );

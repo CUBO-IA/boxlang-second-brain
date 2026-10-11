@@ -410,3 +410,38 @@ Browser puntual en `http://127.0.0.1:3001/`, control nativo real: **DOCX** ense�
 ### Estado/commit
 
 La ronda corrige los defectos locales del reporte Sol; no convierte la rúbrica en una evaluación final de fase 06 ni aprueba Office universal. Estado **Bloqueada** hasta clave y tarifas autorizadas para llamadas reales, prueba de modelo/embedding/uso/coste y revisión independiente. Commit de implementación estable: `29ea429` (`fix: close phase 00 round 3 review findings`). Este registro de evidencia queda en commit docs-only posterior. Los planes untracked preexistentes siguen fuera del commit. Sin push/merge ni traslado al repositorio original.
+
+## Ronda de corrección 4/5 — N7/N9 XLSX
+
+Se corrigieron los dos hallazgos locales de `sol-rereview-3.md` en el punto compartido `EvidenceExtractor.xlsxCells`. N7 concatena los nodos `<t>` descendientes de `<is>` en orden XML usando `XMLText`, como la rama de shared strings. N9 valida el tipo contra el subconjunto admitido (`n`, `s`, `b`, `e`, `str`, `inlineStr`) antes de consultar o leer `<v>`.
+
+### Evidencia por finding
+
+| Finding | Corrección y check |
+|---|---|
+| N7 — inline rich runs | `tests/fixtures/locations-inline-runs.xlsx.b64` contiene un XLSX ZIP con `A ` y `&amp; B` en dos runs inline. `tests/extraction.bxs` materializa el ZIP en `/tmp` y llama el método completo `xlsxCells`; exige el valor literal `A & B`. |
+| N9 — tipo desconocido con `<v>` | `tests/fixtures/locations-unsupported-value.xlsx.b64` contiene una celda `t="unsupported"` con `<v>250</v>`. La misma llamada completa debe rechazarla con `Unsupported XLSX cell type unsupported at A1`. |
+
+### Comandos ejecutados y salidas
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec -T boxlang boxlang tests/extraction.bxs
+```
+
+Salida observada:
+
+```text
+[2026-10-11T07:55:02,247] [main] [WARN ] [org.apache.pdfbox.pdmodel.font.PDType1Font] Using fallback font LiberationSans for Helvetica
+[2026-10-11T07:55:02,258] [main] [WARN ] [org.apache.pdfbox.pdmodel.font.PDType1Font] Using fallback font LiberationSans for Helvetica
+[2026-10-11T07:55:02,283] [main] [WARN ] [org.apache.pdfbox.pdmodel.font.PDType1Font] Using fallback font LiberationSans for Helvetica
+[2026-10-11T07:55:02,285] [main] [WARN ] [org.apache.pdfbox.pdmodel.font.PDType1Font] Using fallback font LiberationSans for Helvetica
+[2026-10-11T07:55:02,289] [main] [WARN ] [org.apache.pdfbox.pdmodel.font.PDType1Font] Using fallback font LiberationSans for Helvetica
+OK: MD=bx-ai MarkdownLoader; TXT/code=bx-ai TextLoader; JSON=bx-ai JSONLoader; CSV=bx-ai CSVLoader; PDF=bx-ai PDFLoader + PDFBox page 2 exact citation; DOCX=secure XML tree; escaped ampersand decoded; ordered runs and paragraph 2 citation exact; XLSX=secure XML tree; Summary first/distractor 999, Limits second/target 250; shared-string entities decoded; XLSX inline rich-text runs concatenate to literal A & B through full ZIP extraction; XLSX rejects unsupported cell type before reading its <v> value; XLSX rejects B0, missing cell refs, fractional/out-of-range shared indices and unsupported formulas
+```
+
+```sh
+git diff --check
+# exit 0, sin salida
+```
+
+No se modificaron los fixtures principales `locations.xlsx` ni el manifest; por ello no se repitió `tests/contracts.mjs`. Smoke, UI, lint/build, proveedor y suites ajenas tampoco se repitieron: sus entradas permanecen sin cambios; no hubo claves, llamadas externas, cambios de fase 01 ni apagado. N7/N9 quedan **corregidos localmente y comprobados**; la fase global sigue **Bloqueada** por falta de key/tarifas autorizadas y evidencia del entorno externo. Pendiente revisión independiente de Sol.

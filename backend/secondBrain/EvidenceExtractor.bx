@@ -95,12 +95,12 @@ class {
 				var ref=cellAttributes.r;
 				if(xmlSearch(cell,"./*[local-name()='f']").len()) throw(message="XLSX formulas are outside the supported subset at #ref#");
 				var type=cellAttributes.t ?: "n";
+				if(type!="n" && type!="s" && type!="b" && type!="e" && type!="str" && type!="inlineStr") throw(message="Unsupported XLSX cell type #type# at #ref#");
 				var valueNodes=xmlSearch(cell,"./*[local-name()='v']");
 				var value="";
 				if(type=="inlineStr") {
-					for(var inlineText in xmlSearch(cell,".//*[local-name()='is']/*[local-name()='t']")) value &= inlineText.XMLText;
+					for(var inlineText in xmlSearch(cell,".//*[local-name()='is']//*[local-name()='t']")) value &= inlineText.XMLText;
 				} else if(!valueNodes.isEmpty()) value=valueNodes[1].XMLText;
-				else if(type!="n" && type!="b" && type!="e" && type!="str") throw(message="Unsupported XLSX cell type #type# at #ref#");
 				if(type=="s") {
 					if(!reFind("^(0|[1-9][0-9]*)$",value)) throw(message="Invalid XLSX shared string index at #ref#");
 					var index=val(value)+1;
