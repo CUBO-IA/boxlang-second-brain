@@ -89,6 +89,7 @@ class {
 		if ( !arguments.selectedDocumentIds.len() ) return variables.answers.abstain("no_evidence_in_selection");
 		var embedResult = variables.caller.embed(arguments.question, variables.embedModel);
 		if ( !embedResult.ok ) return { ok: false, reason: embedResult.reason ?: "query_embed_failed", denied: embedResult.denied ?: false };
+		// ponytail: top 3 keeps evidence under the 32 KB chat-input ceiling; add byte-budgeted context packing before raising it.
 		var retrieved = variables.index.retrieve(arguments.spaceId, arguments.selectedDocumentIds, embedResult.vector, 3);
 		if ( !retrieved.len() ) return variables.answers.abstain("no_evidence_in_selection");
 
