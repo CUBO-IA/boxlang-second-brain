@@ -137,7 +137,9 @@ class {
 		for ( var fragment in retrieved ) {
 			contextBlocks.append("[" & fragment.id & "] " & fragment.text);
 		}
-		var prompt = "Question: " & arguments.question & char(10) & "Evidence:" & char(10) & contextBlocks.toList(char(10));
+		var prompt = "Answer only from the evidence. If the evidence does not support the question, reply with exactly INSUFFICIENT_EVIDENCE."
+			& char(10) & "Question: " & arguments.question
+			& char(10) & "Evidence:" & char(10) & contextBlocks.toList(char(10));
 		var chatResult = variables.caller.chat(prompt, variables.chatModel);
 		if ( !chatResult.ok ) {
 			return { ok: false, reason: chatResult.reason ?: "chat_failed", denied: chatResult.denied ?: false };

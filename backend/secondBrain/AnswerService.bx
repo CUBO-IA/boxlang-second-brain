@@ -30,13 +30,21 @@ class {
 		return t;
 	}
 
+	private boolean function isStopword(required string token) {
+		// Function words that create false lexical overlap (e.g. "del" in absent questions).
+		return listFindNoCase(
+			"the,and,for,with,from,that,this,are,was,were,you,your,del,las,los,una,uno,unos,unas,por,para,con,sin,sobre,como,cómo,quien,quién,cual,cuál,que,qué,este,esta,estos,estas,ese,esa,esos,esas,hay,ser,esta,está,son,fue,han,tiene,todo,toda,muy,mas,más,also,into,about",
+			arguments.token
+		) > 0;
+	}
+
 	private array function tokens(required string text) {
 		var raw = reReplace(lCase(arguments.text), "[^a-z0-9áéíóúñü]+", " ", "all");
 		var parts = listToArray(raw, " ", false, true);
 		var out = [];
 		for ( var part in parts ) {
 			var normalized = normalizeToken(part);
-			if ( len(normalized) >= 3 ) out.append(normalized);
+			if ( len(normalized) >= 3 && !isStopword(normalized) ) out.append(normalized);
 		}
 		return out;
 	}
