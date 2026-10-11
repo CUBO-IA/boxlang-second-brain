@@ -102,7 +102,7 @@ class {
 					}
 				} else {
 					if ( len(arguments.documentId) ) {
-						var target = queryExecute("SELECT d.id FROM documents d WHERE d.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND (? != 'note' OR EXISTS (SELECT 1 FROM document_versions v WHERE v.id = COALESCE(d.candidate_version, d.current_version) AND v.provenance->>'kind' = 'note')) FOR UPDATE", [document, toString(arguments.request.spaceId), arguments.provenanceKind]);
+						var target = queryExecute("SELECT d.id FROM documents d WHERE d.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND EXISTS (SELECT 1 FROM document_versions v WHERE v.id = COALESCE(d.candidate_version, d.current_version) AND v.provenance->>'kind' = ?) FOR UPDATE", [document, toString(arguments.request.spaceId), arguments.provenanceKind]);
 						if ( target.recordCount != 1 ) reject(404, "not_found");
 					} else {
 						var count = queryExecute("SELECT COUNT(*) AS total FROM documents WHERE space_id = CAST(? AS BIGINT) AND (deleted_at IS NULL OR cleanup_pending)", [toString(arguments.request.spaceId)]);

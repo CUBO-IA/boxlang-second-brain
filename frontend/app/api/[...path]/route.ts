@@ -14,11 +14,14 @@ const idPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 type Operation = {
   op: string;
+  endpoint?: "library" | "knowledge";
+  conversationId?: string;
   spaceId?: string;
   memberId?: string;
   documentId?: string;
   taskId?: string;
-  endpoint?: "library";
+  params?: Record<string, string>;
+  bodyLimit?: number;
   // Multipart operations carry the cap applied to their streamed body.
   streamLimit?: number;
   download?: boolean;
@@ -46,6 +49,23 @@ function resolveOperation(pathname: string, method: string): Operation | null {
 
   const spaceId = parts[1];
   if (!/^[1-9][0-9]{0,17}$/.test(spaceId)) return null;
+  if (parts.length === 3 && parts[2] === "notes" && method === "POST") {
+    return { endpoint: "knowledge", op: "createNote", spaceId, bodyLimit: 1_100_000 };
+  }
+  if (parts.length === 4 && parts[2] === "notes" && idPattern.test(parts[3]) && method === "PUT") {
+    return { endpoint: "knowledge", op: "updateNote", spaceId, documentId: parts[3], bodyLimit: 1_100_000 };
+  }
+  if (parts.length === 5 && parts[2] === "documents" && idPattern.test(parts[3]) && parts[4] === "source" && method === "GET") {
+    return { endpoint: "knowledge", op: "source", spaceId, documentId: parts[3], bodyLimit: 32_768 };
+  }
+  if (parts.length === 3 && parts[2] === "conversations" && (method === "GET" || method === "POST")) {
+    return {
+      endpoint: "knowledge",
+      op: method === "GET" ? "listConversations" : "createConversation",
+      spaceId,
+      bodyLimit: 32_768,
+    };
+  }
   if (parts.length === 2 && method === "GET") return { op: "space", spaceId };
   if (parts.length === 3 && parts[2] === "members") {
     if (method === "GET") return { op: "members", spaceId };
@@ -61,6 +81,38 @@ function resolveOperation(pathname: string, method: string): Operation | null {
     return { endpoint: "library", op: "retry", spaceId, taskId: parts[3] };
   }
   return null;
+}
+
+function resolveConversationOperation(parts: string[], method: string): Operation | null {
+  if (parts[0] !== "conversations" || !idPattern.test(parts[1] ?? "")) return null;
+  const conversationId = parts[1];
+  const bodyLimit = 32_768;
+  if (parts.length === 2 && method === "GET") return { endpoint: "knowledge", op: "readConversation", conversationId, bodyLimit };
+  if (parts.length === 3 && parts[2] === "messages" && method === "POST") return { endpoint: "knowledge", op: "sendMessage", conversationId, bodyLimit };
+  if (parts.length === 3 && parts[2] === "share" && method === "POST") return { endpoint: "knowledge", op: "shareConversation", conversationId, bodyLimit };
+  if (parts.length === 3 && parts[2] === "unshare" && method === "POST") return { endpoint: "knowledge", op: "unshareConversation", conversationId, bodyLimit };
+  if (parts.length === 6 && parts[2] === "messages" && idPattern.test(parts[3]) && parts[4] === "citations" && idPattern.test(parts[5]) && method === "GET") {
+    return {
+      endpoint: "knowledge",
+      op: "resolveCitation",
+      conversationId,
+      params: { messageId: parts[3], citationId: parts[5] },
+      bodyLimit,
+    };
+  }
+  return null;
+}
+
+function knownKnowledgePath(parts: string[]) {
+  if (parts[0] === "spaces" && /^[1-9][0-9]{0,17}$/.test(parts[1] ?? "")) {
+    if (parts[2] === "notes") return parts.length === 3 || (parts.length === 4 && idPattern.test(parts[3]));
+    if (parts[2] === "documents") return parts.length === 5 && idPattern.test(parts[3]) && parts[4] === "source";
+    if (parts[2] === "conversations") return parts.length === 3;
+  }
+  if (parts[0] !== "conversations" || !idPattern.test(parts[1] ?? "")) return false;
+  return parts.length === 2
+    || (parts.length === 3 && ["messages", "share", "unshare"].includes(parts[2]))
+    || (parts.length === 6 && parts[2] === "messages" && idPattern.test(parts[3]) && parts[4] === "citations" && idPattern.test(parts[5]));
 }
 
 function resolveLibraryOperation(parts: string[], method: string, spaceId: string): Operation | null {
@@ -88,11 +140,11 @@ function resolveLibraryOperation(parts: string[], method: string, spaceId: strin
 // never hands the handler more bytes than Content-Length announces.
 function rejectStream(request: Request, limit: number): Response | null {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
-    return Response.json({ message: "El formato de la solicitud no es compatible.", category: "format" }, { status: 415 });
+    return jsonResponse({ message: "El formato de la solicitud no es compatible.", category: "format" }, 415);
   }
   const declared = request.headers.get("content-length") ?? "";
   if (!/^[0-9]{1,15}$/.test(declared) || Number(declared) > limit) {
-    return Response.json({ message: "La solicitud supera el tamaño permitido.", category: "limit" }, { status: 413 });
+    return jsonResponse({ message: "La solicitud supera el tamaño permitido.", category: "limit" }, 413);
   }
   return null;
 }
@@ -111,7 +163,7 @@ function downloadResponse(upstream: Response): Response {
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
-async function readBody(request: Request): Promise<Uint8Array> {
+async function readBody(request: Request, limit: number): Promise<Uint8Array> {
   if (!request.body) return new Uint8Array();
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -120,7 +172,7 @@ async function readBody(request: Request): Promise<Uint8Array> {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > bodyLimit) {
+    if (size > limit) {
       await reader.cancel();
       throw new RangeError("Request body is too large");
     }
@@ -135,9 +187,20 @@ async function readBody(request: Request): Promise<Uint8Array> {
   return body;
 }
 
+function jsonResponse(body: object, status: number): Response {
+  return Response.json(body, {
+    status,
+    headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" },
+  });
+}
+
 async function delegate(request: Request): Promise<Response> {
-  const route = resolveOperation(new URL(request.url).pathname, request.method);
-  if (!route) return Response.json({ message: "No se encontró la operación." }, { status: 404 });
+  const url = new URL(request.url);
+  const parts = url.pathname.split("/").filter(Boolean).slice(1);
+  const route = resolveOperation(url.pathname, request.method) ?? resolveConversationOperation(parts, request.method);
+  if (!route) return knownKnowledgePath(parts)
+    ? jsonResponse({ message: "El método no está permitido.", category: "method" }, 405)
+    : jsonResponse({ message: "No se encontró la operación." }, 404);
 
   let body: Uint8Array = new Uint8Array();
   if (route.streamLimit) {
@@ -145,18 +208,30 @@ async function delegate(request: Request): Promise<Response> {
     if (rejection) return rejection;
   } else {
     try {
-      body = await readBody(request);
+      body = await readBody(request, route.bodyLimit ?? bodyLimit);
     } catch {
-      return Response.json({ message: "La solicitud supera el tamaño permitido." }, { status: 413 });
+      return jsonResponse({ message: "La solicitud supera el tamaño permitido.", category: "limit" }, 413);
     }
   }
 
-  const backend = new URL(route.endpoint === "library" ? "/api/library.bxm" : "/api/account.bxm", process.env.BOXLANG_URL);
+  const backendPath = route.endpoint === "library" ? "/api/library.bxm"
+    : route.endpoint === "knowledge" ? "/api/knowledge.bxm" : "/api/account.bxm";
+  const backend = new URL(backendPath, process.env.BOXLANG_URL);
   backend.searchParams.set("op", route.op);
   if (route.spaceId) backend.searchParams.set("spaceId", route.spaceId);
   if (route.memberId) backend.searchParams.set("memberId", route.memberId);
   if (route.documentId) backend.searchParams.set("documentId", route.documentId);
   if (route.taskId) backend.searchParams.set("taskId", route.taskId);
+  if (route.conversationId) backend.searchParams.set("conversationId", route.conversationId);
+  for (const [key, value] of Object.entries(route.params ?? {})) backend.searchParams.set(key, value);
+  if (route.endpoint === "knowledge") {
+    const allowed = route.op === "listConversations" ? ["offset", "limit"]
+      : route.op === "readConversation" ? ["afterSequence", "limit"] : [];
+    for (const key of allowed) {
+      const value = url.searchParams.get(key);
+      if (value !== null) backend.searchParams.set(key, value);
+    }
+  }
 
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
@@ -178,7 +253,7 @@ async function delegate(request: Request): Promise<Response> {
     const init: RequestInit & { duplex?: "half" } = {
       method: request.method,
       headers,
-      body: stream ?? (body.byteLength ? new TextDecoder().decode(body) : undefined),
+      body: stream ?? (body.byteLength ? new Blob([body.buffer as ArrayBuffer]) : undefined),
       cache: "no-store",
       signal: request.signal,
     };
@@ -186,17 +261,18 @@ async function delegate(request: Request): Promise<Response> {
     const upstream = await fetch(backend, init);
     if (route.download && upstream.ok) return downloadResponse(upstream);
     if (!upstream.headers.get("content-type")?.includes("application/json")) {
-      return Response.json({ message: "El servicio no está disponible." }, { status: 502 });
+      return jsonResponse({ message: "El servicio no está disponible." }, 502);
     }
     const responseHeaders = new Headers({
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
     });
     const setCookie = upstream.headers.get("set-cookie");
     if (setCookie) responseHeaders.set("set-cookie", setCookie);
     return new Response(await upstream.arrayBuffer(), { status: upstream.status, headers: responseHeaders });
   } catch {
-    return Response.json({ message: "El servicio no está disponible." }, { status: 502 });
+    return jsonResponse({ message: "El servicio no está disponible." }, 502);
   }
 }
 

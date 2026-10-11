@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 
 import { ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
@@ -19,6 +19,8 @@ import {
   type UploadResult,
 } from "../lib/library";
 import type { Language, Space } from "../lib/types";
+import { createNote, readSource, updateNote, type Source } from "../lib/knowledge";
+import { TextSourceView } from "./TextSourceView";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -123,6 +125,16 @@ export function LibraryPanel({
   const [dragging, setDragging] = useState(false);
   const [query, setQuery] = useState("");
   const [listVersion, setListVersion] = useState(0);
+  const [viewerId, setViewerId] = useState("");
+  const [viewerSource, setViewerSource] = useState<Source | null>(null);
+  const [viewerBusy, setViewerBusy] = useState(false);
+  const [dialogMode, setDialogMode] = useState<"source" | "edit" | null>(null);
+  const [noteEditor, setNoteEditor] = useState<{ documentId?: string; title: string; body: string; operationKey: string } | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteError, setNoteError] = useState("");
+  const [noteNotice, setNoteNotice] = useState("");
+  const dialog = useRef<HTMLDialogElement>(null);
+  const noteController = useRef<AbortController | null>(null);
   const spaceEpoch = useRef(0);
   const listInFlight = useRef(false);
   const loaded = useRef(false);
@@ -131,7 +143,33 @@ export function LibraryPanel({
 
   useEffect(() => () => {
     spaceEpoch.current += 1;
+    noteController.current?.abort();
   }, [spaceId]);
+
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (dialogMode && !element.open) element.showModal();
+    if (!dialogMode && element.open) element.close();
+  }, [dialogMode]);
+
+  useEffect(() => {
+    if (dialogMode !== "source" || !viewerId) return;
+    const controller = new AbortController();
+    const epoch = spaceEpoch.current;
+    readSource(spaceId, viewerId, controller.signal)
+      .then(({ source }) => {
+        if (epoch === spaceEpoch.current && !controller.signal.aborted) setViewerSource(source);
+      })
+      .catch((error: unknown) => {
+        if (epoch !== spaceEpoch.current || controller.signal.aborted) return;
+        if (error instanceof ApiError && error.status === 401) onSessionExpired();
+        else if (isForbidden(error)) onForbidden();
+        else setNoteError(t.noteLoadError);
+      })
+      .finally(() => { if (epoch === spaceEpoch.current && !controller.signal.aborted) setViewerBusy(false); });
+    return () => controller.abort();
+  }, [dialogMode, viewerId, spaceId, onSessionExpired, onForbidden, t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -289,6 +327,79 @@ export function LibraryPanel({
     });
   }
 
+  function openSource(document: LibraryDocument) {
+    setViewerId(document.id);
+    setViewerSource(null);
+    setViewerBusy(true);
+    setNoteError("");
+    setNoteNotice("");
+    setDialogMode("source");
+  }
+
+  function startNote() {
+    setNoteEditor({ title: "", body: "", operationKey: "" });
+    setNoteError("");
+    setDialogMode("edit");
+  }
+
+  function editCurrentNote() {
+    if (!viewerSource || viewerSource.kind !== "note" || !canEdit) return;
+    setNoteEditor({ documentId: viewerSource.documentId, title: viewerSource.title, body: viewerSource.content, operationKey: "" });
+    setNoteError("");
+    setDialogMode("edit");
+  }
+
+  async function saveNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!noteEditor || noteBusy || !canEdit) return;
+    if (new TextEncoder().encode(noteEditor.body).byteLength > 1_048_576) {
+      setNoteError(t.noteBodyTooLarge);
+      return;
+    }
+    const epoch = spaceEpoch.current;
+    const controller = new AbortController();
+    noteController.current = controller;
+    const operationKey = noteEditor.operationKey || crypto.randomUUID();
+    const payload = { title: noteEditor.title, body: noteEditor.body, operationKey };
+    setNoteEditor({ ...noteEditor, operationKey });
+    setNoteBusy(true);
+    setNoteError("");
+    setNoteNotice("");
+    try {
+      if (noteEditor.documentId) await updateNote(spaceId, noteEditor.documentId, csrfToken, payload, controller.signal);
+      else await createNote(spaceId, csrfToken, payload, controller.signal);
+      if (epoch !== spaceEpoch.current || controller.signal.aborted) return;
+      setNoteBusy(false);
+      setNoteEditor(null);
+      setDialogMode(null);
+      setNoteNotice(t.noteSaved);
+      refresh();
+    } catch (error) {
+      if (epoch !== spaceEpoch.current || controller.signal.aborted) return;
+      if (error instanceof ApiError && error.status === 401) onSessionExpired();
+      else if (isForbidden(error)) onForbidden();
+      else if (error instanceof ApiError && error.status === 413) setNoteError(t.noteBodyTooLarge);
+      else if (error instanceof ApiError && error.status === 404) setNoteError(t.libraryNotFound);
+      else if (error instanceof ApiError && error.status === 409) setNoteError(t.libraryConflict);
+      else if (error instanceof ApiError && error.status === 429) setNoteError(t.libraryBudget);
+      else if (error instanceof ApiError && error.category === "provider") setNoteError(t.libraryProvider);
+      else setNoteError(t.libraryUnknown);
+    } finally {
+      if (epoch === spaceEpoch.current && !controller.signal.aborted) setNoteBusy(false);
+    }
+  }
+
+  function closeDialog() {
+    if (noteBusy) return;
+    noteController.current?.abort();
+    setDialogMode(null);
+    setViewerId("");
+    setViewerSource(null);
+    setViewerBusy(false);
+    setNoteEditor(null);
+    setNoteError("");
+  }
+
   const documents = library?.documents ?? [];
   const needle = query.trim().toLocaleLowerCase(language);
   const visible = needle
@@ -334,6 +445,7 @@ export function LibraryPanel({
       <p className="notice" role={notice ? (notice.error ? "alert" : "status") : undefined} aria-live="polite">
         {notice ? t[notice.key] : ""}
       </p>
+      <p className="notice" role={noteNotice ? "status" : undefined} aria-live="polite">{noteNotice}</p>
 
       {loadError && (
         <p className="library-load-error" role="alert">
@@ -350,6 +462,7 @@ export function LibraryPanel({
               <SearchIcon />
               <input id="library-search" type="search" placeholder={t.searchDocuments} value={query} onChange={(event) => setQuery(event.target.value)} />
             </label>
+            {canEdit && <button className="button primary" type="button" onClick={startNote}>{t.noteCreate}</button>}
             {library && <span className="member-count" aria-label={t.documentCount(documents.length)}>{documents.length}</span>}
           </div>
           {!library ? (
@@ -403,11 +516,12 @@ export function LibraryPanel({
                         <td>
                           <div className="document-actions">
                             <a className="button quiet" href={originalDocumentPath(spaceId, item.id)} download aria-label={t.downloadOriginalFor(item.name)}>{t.downloadOriginal}</a>
+                            {item.status === "available" && (item.source === "note" || item.format === "txt") && <button className="button quiet" type="button" onClick={() => openSource(item)} aria-label={`${t.sourceOpen}: ${item.name}`}>{t.sourceOpen}</button>}
                             {canEdit && (
                               <>
-                                <button className="button quiet" type="button" disabled={busy !== ""} aria-label={t.replaceFor(item.name)} onClick={() => startReplace(item)}>
+                                {item.source !== "note" && <button className="button quiet" type="button" disabled={busy !== ""} aria-label={t.replaceFor(item.name)} onClick={() => startReplace(item)}>
                                   {busy === `replace-${item.id}` ? t.busy : t.replaceDocument}
-                                </button>
+                                </button>}
                                 {canRetry(item) && (
                                   <button className="button quiet" type="button" disabled={busy !== ""} aria-label={t.retryFor(item.name)} onClick={() => retry(item)}>
                                     {busy === `retry-${item.id}` ? t.busy : t.retryDocument}
@@ -461,6 +575,34 @@ export function LibraryPanel({
           </div>
         </aside>
       </div>
+      <dialog ref={dialog} className="source-dialog" aria-labelledby="source-dialog-title" onCancel={(event) => { if (noteBusy) event.preventDefault(); }} onClose={() => { noteController.current?.abort(); setNoteBusy(false); setViewerBusy(false); setDialogMode(null); setNoteEditor(null); setViewerId(""); setViewerSource(null); }}>
+        <div className="source-dialog-heading">
+          <div><p className="eyebrow">{dialogMode === "edit" ? t.sourceNote : viewerSource?.kind === "note" ? t.sourceNote : t.sourceFile}</p><h2 id="source-dialog-title">{dialogMode === "edit" ? (noteEditor?.documentId ? t.noteEdit : t.noteCreate) : viewerSource?.title ?? t.sourceDialog}</h2></div>
+          <button className="button quiet" type="button" onClick={closeDialog} disabled={noteBusy}>{t.noteCancel}</button>
+        </div>
+        {dialogMode === "edit" && noteEditor ? (
+          <form className="note-editor" onSubmit={(event) => void saveNote(event)} aria-busy={noteBusy}>
+            <label htmlFor="note-title">{t.noteTitle}</label>
+            <input id="note-title" required maxLength={255} value={noteEditor.title} onChange={(event) => setNoteEditor({ ...noteEditor, title: event.target.value, operationKey: "" })} />
+            <label htmlFor="note-body">{t.noteBody}</label>
+            <textarea id="note-body" required rows={14} value={noteEditor.body} onChange={(event) => setNoteEditor({ ...noteEditor, body: event.target.value, operationKey: "" })} aria-describedby="note-body-hint" />
+            <p className="field-hint" id="note-body-hint">{t.noteBodyHint} {new Intl.NumberFormat(language).format(new TextEncoder().encode(noteEditor.body).byteLength)} / 1,048,576 bytes</p>
+            {noteError && <p className="notice" role="alert">{noteError}</p>}
+            <div className="composer-footer"><span>{t.noteBodyHint}</span><button className="button primary" type="submit" disabled={noteBusy || !noteEditor.title.trim() || !noteEditor.body.length}>{noteBusy ? t.noteSaving : t.noteSave}</button></div>
+          </form>
+        ) : (
+          <>
+            {viewerBusy && <p role="status">{t.libraryLoading}</p>}
+            {noteError && <p role="alert">{noteError}</p>}
+            {viewerSource && <>
+              <p className="source-meta">{viewerSource.kind === "note" ? t.sourceNote : t.sourceFile} · {viewerSource.lineCount} {language === "es" ? "líneas" : "lines"}</p>
+              <TextSourceView source={viewerSource} />
+              {viewerSource.kind === "note" && (canEdit ? <div className="source-actions"><button className="button primary" type="button" onClick={editCurrentNote}>{t.noteEdit}</button></div> : <p className="historical-warning">{t.noteReadOnly}</p>)}
+            </>}
+            {!viewerBusy && !viewerSource && !noteError && <p role="status">{t.noteLoadError}</p>}
+          </>
+        )}
+      </dialog>
     </section>
   );
 }

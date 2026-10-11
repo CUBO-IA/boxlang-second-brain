@@ -28,35 +28,27 @@ class {
 		return javaString.substring(startIndex, endIndex);
 	}
 
-	private struct function locationForSlice(required array lines, required string slice, any heartbeat="") {
-		var startLine = 1;
-		var endLine = arguments.lines.len();
-		if ( len(trim(arguments.slice)) ) {
-			var first = left(trim(arguments.slice), min(40, len(trim(arguments.slice))));
-			for ( var i = 1; i <= arguments.lines.len(); i++ ) {
-				if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
-				var row = arguments.lines[i];
-				if ( find(first, row.text) || find(row.text, arguments.slice) ) {
-					startLine = row.line;
-					break;
-				}
-			}
-			var last = right(trim(arguments.slice), min(40, len(trim(arguments.slice))));
-			for ( var i = arguments.lines.len(); i >= 1; i-- ) {
-				if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
-				var candidate = arguments.lines[i];
-				if ( find(last, candidate.text) || find(candidate.text, arguments.slice) ) {
-					endLine = candidate.line;
-					break;
-				}
-			}
-			if ( endLine < startLine ) endLine = startLine;
+	private struct function locationForSlice(required array lines, required numeric startOffset, required numeric endOffset, any heartbeat="") {
+		var startLine = arguments.lines.len();
+		var endLine = startLine;
+		var cursor = 0;
+		for ( var i = 1; i <= arguments.lines.len(); i++ ) {
+			if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
+			var row = arguments.lines[i];
+			var lineEnd = cursor + codePointLen(row.text);
+			if ( arguments.startOffset <= lineEnd && startLine == arguments.lines.len() ) startLine = row.line;
+			if ( arguments.endOffset > arguments.startOffset && arguments.endOffset - 1 <= lineEnd && endLine == arguments.lines.len() ) endLine = row.line;
+			cursor = lineEnd + 1;
 		}
+		if ( endLine < startLine ) endLine = startLine;
 		return {
 			kind: "lines",
 			lineStart: startLine,
 			lineEnd: endLine,
-			fragmentId: "L" & numberFormat(startLine, "000000") & "-L" & numberFormat(endLine, "000000")
+			fragmentId: "L" & numberFormat(startLine, "000000") & "-L" & numberFormat(endLine, "000000"),
+			// Zero-based Unicode code-point range, end-exclusive, into normalized source content.
+			startOffset: arguments.startOffset,
+			endOffset: arguments.endOffset
 		};
 	}
 
@@ -68,7 +60,7 @@ class {
 			return [ {
 				fragmentIndex: 1,
 				text: "",
-				location: { kind: "lines", lineStart: 1, lineEnd: 1, fragmentId: "L000001-L000001" },
+				location: { kind: "lines", lineStart: 1, lineEnd: 1, fragmentId: "L000001-L000001", startOffset: 0, endOffset: 0 },
 				spaceId: arguments.extracted.spaceId,
 				documentId: arguments.extracted.documentId,
 				revisionId: arguments.extracted.revisionId
@@ -81,7 +73,7 @@ class {
 			if ( isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
 			if ( index > variables.maxFragments ) throw( message="Document exceeds #variables.maxFragments# fragments" );
 			var slice = substringCodePoints(text, offset, variables.maxCodePoints);
-			var location = locationForSlice(lines, slice, arguments.heartbeat);
+			var location = locationForSlice(lines, offset, min(offset + variables.maxCodePoints, total), arguments.heartbeat);
 			fragments.append({
 				fragmentIndex: index,
 				text: slice,

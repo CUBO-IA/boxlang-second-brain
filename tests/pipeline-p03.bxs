@@ -11,6 +11,11 @@ function conflicts409(required any action) {
 	catch (any error) { return error.type == "SecondBrain.Library" && toNumeric(error.errorCode) == 409; }
 	return false;
 }
+function notFound404(required any action) {
+	try { arguments.action(); }
+	catch (any error) { return error.type == "SecondBrain.Library" && toNumeric(error.errorCode) == 404; }
+	return false;
+}
 
 runId = lCase(left(replace(createUUID(), "-", "", "all"), 12));
 email = "pipeline-#runId#@example.invalid";
@@ -51,6 +56,7 @@ try {
 	kindNoteReplay = service.createNote(input, "note.txt", "same body", kindNoteKey);
 	verify(kindNoteReplay.replay && kindNoteReplay.documentId == kindNote.documentId && kindNoteReplay.versionId == kindNote.versionId, "Same-kind note replay preserves identity");
 	verify(conflicts409(() => service.acceptFile(input, temp & "/kind.txt", "note.txt", kindNoteKey)), "Note-to-upload operation-key reuse conflicts");
+	verify(notFound404(() => service.acceptFile(input, temp & "/kind.txt", "kind.txt", "replace-note-#runId#", kindNote.documentId)), "File replacement cannot change a note into an upload");
 	fileWrite(temp & "/one.txt", "Línea uno" & char(13) & char(10) & "Línea dos", "UTF-8");
 	first = service.acceptFile(input, temp & "/one.txt", "one.txt", "one-#runId#");
 	fileWrite(temp & "/two.txt", "A separate source about the second topic.", "UTF-8");
