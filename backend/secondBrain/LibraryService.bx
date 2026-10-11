@@ -316,7 +316,10 @@ class {
 			if ( !structKeyExists(methods, arguments.operation) ) reject(404, "not_found");
 			if ( arguments.request.method != methods[arguments.operation] ) reject(405, "method");
 			switch ( arguments.operation ) {
-				case "documents": return {status: 200, body: {documents: listDocuments(arguments.request), limits: {maxFileBytes: 50000000, maxDocuments: 1000, maxFilesPerUpload: 20}}};
+				case "documents":
+					var documents = listDocuments(arguments.request);
+					var budget = new secondBrain.BudgetService().snapshot();
+					return {status: 200, body: {documents: documents, limits: {maxFileBytes: 50000000, maxDocuments: 1000, maxFilesPerUpload: 20}, budget: {exhausted: budget.availableUSD <= 0}}};
 				case "original": return {status: 200, body: {}, download: getOriginal(arguments.request, arguments.request.documentId)};
 				case "task": return {status: 200, body: {task: getTask(arguments.request, arguments.request.taskId)}};
 				case "retry": retryTask(arguments.request, arguments.request.taskId); return {status: 202, body: {task: getTask(arguments.request, arguments.request.taskId)}};

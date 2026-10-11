@@ -47,6 +47,7 @@ try {
   const listed = await request(docs, admin);
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.limits, { maxFileBytes: 50_000_000, maxDocuments: 1000, maxFilesPerUpload: 20 });
+  assert.equal(typeof listed.body.budget.exhausted, "boolean");
   const document = listed.body.documents.find((item) => item.id === stored.documentId);
   assert.match(document.id, /^[a-f0-9-]{36}$/);
   assert.equal(document.source, "file");

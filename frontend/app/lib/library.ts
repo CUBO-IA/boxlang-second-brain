@@ -30,7 +30,7 @@ export type LibraryLimits = { maxFileBytes: number; maxDocuments: number; maxFil
 export type DocumentListResponse = {
   documents: LibraryDocument[];
   limits: LibraryLimits;
-  budget?: { exhausted: boolean };
+  budget: { exhausted: boolean };
 };
 
 export type UploadResult =

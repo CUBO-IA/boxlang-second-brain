@@ -26,4 +26,21 @@ También se ejecutó la secuencia quota → cargas concurrentes → audit → in
 
 Navegador Chrome, origen 3004, cuenta sintética admin del slug HTTP: login y biblioteca reales; carga `browser.txt` + `browser.exe` muestra **1 de 2 aceptados**, TXT pendiente/no consultable, EXE rechazado por formato; fuente, tamaño, fecha, límites y enlaces privados visibles, sin error de renderizado.
 
-La fase no se declara Verificada con esta evidencia A+C: todavía falta validar B sobre la base integrada. No se activa ningún worker ni se acredita ingesta real/fase 03.
+## B sobre A+C
+
+- Migración `003_budget_and_knowledge.sql`: `002` queda reservada a biblioteca. Aplicación sobre la base A y replay 1/2/3 aprobados.
+- Conflictos documentales resueltos conservando el cierre técnico de fase 00 y su parche científico, no el bookkeeping anterior de B que aún describía ese fallo como abierto. La evidencia histórica de B permanece separada.
+- `LibraryService` consulta `BudgetService.snapshot()` después de autorizar el espacio; devuelve solo `budget.exhausted`, no reservas, costes ni información de otras personas. En Chrome se comprobó el aviso real de presupuesto agotado con el ledger sintético del entorno aislado; después se restauró su límite.
+- `budget-p02.bxs`, `knowledge-core-cli.bxs` y `knowledge-p03.bxs` aprobados secuencialmente sobre el esquema integrado. Los dos últimos son regresión del contenido incluido en PR #3, no autorización ni cierre de fase 03.
+- Las suites de B borran datos globales de presupuesto/conocimiento. Se añadió el guard `P02_ISOLATED_DATABASE=YES`, también al probe real, y se documentó el requisito. Nunca ejecutar con datos de uso reales.
+- Prueba web real repetida con el ledger y campos presupuestarios; TypeScript, lint y build de producción aprobados. El frontend dev se reinició después del build porque ambos comparten `.next` en ese contenedor.
+
+```sh
+docker compose -p second-brain-phase02-merge exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/budget-p02.bxs
+docker compose -p second-brain-phase02-merge exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/knowledge-core-cli.bxs
+docker compose -p second-brain-phase02-merge exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/knowledge-p03.bxs
+```
+
+La fase permanece **En curso**, no Verificada: P02.6 de B comprueba denegación secuencial, no dos reservas realmente simultáneas; P02.7 envejece una fila y ejecuta recuperación, pero no acredita un reinicio real con la reserva abierta. Esas comprobaciones y el checklist final de UI siguen pendientes. No se activa ningún worker ni se acredita ingesta real/fase 03; no hubo llamadas ni gasto de IA durante esta integración.
+
+Para actualizar una base de `main`, aplicar migraciones antes de servir biblioteca. Una base experimental que ya hubiera usado `002` para B no es una base de `main`: no editar `schema_migrations` ni recrear volúmenes con datos; requiere revisión específica antes de actualizar.

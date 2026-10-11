@@ -97,11 +97,11 @@ La ruta de desarrollo `http://127.0.0.1:3000/feasibility` abre únicamente fixtu
 
 ## Alcance futuro, no implementado
 
-Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias y presupuesto requieren trabajo posterior. Los probes no implican RAG productivo ni acreditan facturación. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+La biblioteca todavía no conecta ingesta multiformato, recuperación con evidencia, contradicciones ni separación entre hechos e inferencias. B aporta un núcleo CLI provisional y ledger, no RAG de producto ni conciliación de facturación. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
 
-## Fase 02 — plataforma y seguridad (A)
+## Fase 02 — integración A+B+C
 
-Migración 2 y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. **Fase En curso:** A+C integrados; falta integrar y validar presupuesto B. No se ejecuta ingesta ni IA. [Evidencia de integración](docs/plan/evidence/phase02-merge.md).
+Migración 2 de biblioteca, migración 3 de presupuesto/conocimiento y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. El aviso presupuestario usa el ledger de B, sin exponer consumo ajeno. **Fase En curso:** A+B+C integrados; falta el cierre de verificación indicado en el plan. No se activa ingesta ni IA. [Evidencia de integración](docs/plan/evidence/phase02-merge.md).
 
 ```sh
 docker compose up -d --no-deps --wait boxlang

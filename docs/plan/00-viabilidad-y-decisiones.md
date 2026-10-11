@@ -62,7 +62,7 @@ Completar esta tabla con resultado real y enlace a la evidencia. «Por decidir»
 
 El [cierre técnico estable](evidence/phase00-closure.md) incorpora el seguimiento de la rama `phase00-finish` y conserva los límites de evidencia. El [histórico del proveedor](evidence/provider-phase00.md) no se reescribe: el seguimiento posterior corrige su conclusión temporal de fallo del parser. No se repiten llamadas IA ni se exige infraestructura/entitlement de fases posteriores para acreditar viabilidad.
 
-## Defaults locales propuestos para implementación (no medidos)
+## Defaults adoptados para implementación
 
 | Área | Decisión provisional | Límite/recuperación |
 |---|---|---|
@@ -77,4 +77,4 @@ El [cierre técnico estable](evidence/phase00-closure.md) incorpora el seguimien
 
 Estos valores son defaults de diseño para revisar antes de producción, no resultados experimentales ni capacidades ya implementadas. Perfil candidato, acceso HTTPS privado, backup y protocolo de carga se concretan en [operación y evaluación](evidence/phase00-closure.md#operación-y-evaluación); host/DNS/certificados y medición real corresponden al despliegue de fase 08.
 
-**No se construye aquí:** la aplicación completa, una integración vectorial alternativa, una cola adicional por anticipado ni bibliotecas elegidas sin prueba. **Siguiente:** [fase 01](01-cuentas-espacios-y-permisos.md).
+**No se construye aquí:** la aplicación completa de negocio. **Siguiente:** [fase 01](01-cuentas-espacios-y-permisos.md) (ya Verificada) → [fase 02](02-biblioteca-tareas-y-presupuesto.md).

@@ -1,0 +1,154 @@
+import secondBrain.BudgetService;
+import secondBrain.BudgetGatedCaller;
+import secondBrain.TextNoteExtractor;
+import secondBrain.TextChunker;
+import secondBrain.KnowledgeIndex;
+import secondBrain.AnswerService;
+import secondBrain.ProviderDouble;
+
+/**
+ * Role B facade: ingest TXT/notes → embed (budget-gated) → retrieve → answer.
+ * Callable from BoxLang CLI without HTTP or Next.js (03.9).
+ */
+class {
+	property name="budget";
+	property name="caller";
+	property name="extractor";
+	property name="chunker";
+	property name="index";
+	property name="answers";
+	property name="chatModel" default="gpt-6-luna";
+	property name="embedModel" default="text-embedding-3-small";
+
+	function init(any provider="") {
+		variables.budget = new BudgetService();
+		var resolvedProvider = isObject(arguments.provider) ? arguments.provider : new ProviderDouble();
+		variables.caller = new BudgetGatedCaller(variables.budget, resolvedProvider);
+		variables.extractor = new TextNoteExtractor();
+		variables.chunker = new TextChunker();
+		variables.index = new KnowledgeIndex();
+		variables.answers = new AnswerService();
+		variables.chatModel = "gpt-6-luna";
+		variables.embedModel = "text-embedding-3-small";
+		return this;
+	}
+
+	any function getBudget() { return variables.budget; }
+	any function getCaller() { return variables.caller; }
+	any function getIndex() { return variables.index; }
+	any function getAnswers() { return variables.answers; }
+
+	struct function ingestText(
+		required string spaceId,
+		required string documentId,
+		required string revisionId,
+		required string name,
+		required string text,
+		string mediaType="text/plain",
+		string kind="txt"
+	) {
+		variables.index.upsertDocument(arguments.documentId, arguments.spaceId, arguments.revisionId, arguments.name, arguments.mediaType);
+		var extracted = variables.extractor.extract(arguments.text, arguments.documentId, arguments.revisionId, arguments.spaceId, arguments.kind);
+		var fragments = variables.chunker.chunkExtracted(extracted);
+		variables.index.storeFragmentsStaging(fragments);
+		var embedded = 0;
+		for ( var fragment in fragments ) {
+			var embedResult = variables.caller.embed(fragment.text, variables.embedModel);
+			if ( !embedResult.ok ) {
+				return {
+					ok: false,
+					reason: embedResult.reason ?: "embed_failed",
+					denied: embedResult.denied ?: false,
+					documentId: arguments.documentId,
+					revisionId: arguments.revisionId,
+					embeddedCount: embedded
+				};
+			}
+			variables.index.attachEmbedding(arguments.documentId, arguments.revisionId, fragment.fragmentIndex, embedResult.vector);
+			embedded++;
+		}
+		var published = variables.index.publishRevision(arguments.documentId, arguments.revisionId);
+		return {
+			ok: true,
+			documentId: arguments.documentId,
+			revisionId: arguments.revisionId,
+			fragmentCount: fragments.len(),
+			embeddedCount: embedded,
+			status: published.status,
+			lines: extracted.lineCount
+		};
+	}
+
+	/** 03.1 — notes are normalized text with stable line ids, published through the same pipeline. */
+	struct function upsertNote(
+		required string spaceId,
+		required string noteId,
+		required string revisionId,
+		required string title,
+		required string body
+	) {
+		return ingestText(
+			arguments.spaceId,
+			arguments.noteId,
+			arguments.revisionId,
+			arguments.title,
+			arguments.body,
+			"text/note",
+			"note"
+		);
+	}
+
+	struct function replaceText(
+		required string spaceId,
+		required string documentId,
+		required string revisionId,
+		required string name,
+		required string text,
+		string mediaType="text/plain"
+	) {
+		return ingestText(arguments.spaceId, arguments.documentId, arguments.revisionId, arguments.name, arguments.text, arguments.mediaType);
+	}
+
+	struct function deleteDocument(required string documentId) {
+		return variables.index.deleteDocument(arguments.documentId);
+	}
+
+	struct function ask(
+		required string spaceId,
+		required array selectedDocumentIds,
+		required string question
+	) {
+		var embedResult = variables.caller.embed(arguments.question, variables.embedModel);
+		if ( !embedResult.ok ) {
+			return { ok: false, reason: embedResult.reason ?: "query_embed_failed", denied: embedResult.denied ?: false };
+		}
+		var retrieved = variables.index.retrieve(arguments.spaceId, arguments.selectedDocumentIds, embedResult.vector, 8);
+		if ( retrieved.len() == 0 ) {
+			return variables.answers.abstain("no_evidence_in_selection");
+		}
+		var plan = variables.answers.planClaimsFromRetrieval(arguments.question, retrieved);
+		if ( plan.abstain ) {
+			var early = variables.answers.abstain(plan.reason ?: "question_not_supported_by_evidence");
+			early.retrievedCount = retrieved.len();
+			early.usageUSD = embedResult.actualUSD ?: 0;
+			return early;
+		}
+		var contextBlocks = [];
+		for ( var fragment in retrieved ) {
+			contextBlocks.append("[" & fragment.id & "] " & fragment.text);
+		}
+		var prompt = "Answer only from the evidence. If the evidence does not support the question, reply with exactly INSUFFICIENT_EVIDENCE."
+			& char(10) & "Question: " & arguments.question
+			& char(10) & "Evidence:" & char(10) & contextBlocks.toList(char(10));
+		var chatResult = variables.caller.chat(prompt, variables.chatModel);
+		if ( !chatResult.ok ) {
+			return { ok: false, reason: chatResult.reason ?: "chat_failed", denied: chatResult.denied ?: false };
+		}
+		var built = variables.answers.buildFromRetrieved(chatResult.response.choices[1].message.content, retrieved, plan.claimSpecs);
+		built.retrievedCount = retrieved.len();
+		built.usageUSD = (embedResult.actualUSD ?: 0) + (chatResult.actualUSD ?: 0);
+		built.spaceId = arguments.spaceId;
+		built.selectedDocumentIds = arguments.selectedDocumentIds;
+		return built;
+	}
+}

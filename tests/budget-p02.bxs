@@ -1,0 +1,83 @@
+// Role B — P02.6 / P02.7 budget reservation and reconciliation with provider doubles.
+// Covers V16–V18 budget controls. Does not call OpenAI.
+import secondBrain.BudgetService;
+import secondBrain.BudgetGatedCaller;
+import secondBrain.ProviderDouble;
+
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="This test clears ledger data. Use an isolated Compose database and P02_ISOLATED_DATABASE=YES.");
+
+function assertTrue(required boolean condition, required string message) {
+	if ( !arguments.condition ) throw( message=arguments.message );
+}
+
+budget = new BudgetService();
+provider = new ProviderDouble();
+caller = new BudgetGatedCaller(budget, provider);
+
+// Self-contained ledger: clear today's rows so prior runs cannot exhaust the tiny ceiling.
+day = budget.snapshot().dayUtc;
+queryExecute("DELETE FROM budget_reservations WHERE day_utc = CAST(? AS DATE)", [ day ]);
+queryExecute(
+	"INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), CAST(? AS NUMERIC)) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = EXCLUDED.limit_usd",
+	[ day, 20 ]
+);
+
+// Use an isolated tiny ceiling for denial math on today's ledger.
+tinyLimit = 0.00005;
+
+// --- P02.6: atomic reserves; denied calls never reach the provider ---
+first = budget.reserve("embed", "text-embedding-3-small", 0.00003, tinyLimit);
+assertTrue(first.ok, "P02.6 first reserve should succeed");
+second = budget.reserve("chat", "gpt-6-luna", 0.00003, tinyLimit);
+assertTrue(!second.ok && second.denied == true, "P02.6 second reserve must be denied when limit would be exceeded");
+assertTrue(second.reason == "budget_insufficient", "P02.6 denial reason must be budget_insufficient");
+
+beforeEmbed = provider.getEmbedCalls();
+// Force the gated caller through a reserve that exceeds remaining tiny-day capacity.
+// Temporarily fill the day, then attempt a large embed estimate.
+fill = budget.reserve("concepts", "gpt-6-luna", 0.000015, tinyLimit);
+assertTrue(fill.ok, "P02.6 fill reserve should succeed under tiny ceiling");
+deniedDirect = budget.reserve("embed", "text-embedding-3-small", 0.00003, tinyLimit);
+assertTrue(!deniedDirect.ok && deniedDirect.denied == true, "P02.6 third reserve under tiny ceiling must deny");
+deniedEmbed = caller.embed("x", "text-embedding-3-small", 1000000);
+assertTrue(deniedEmbed.denied == true && deniedEmbed.providerCalled == false, "P02.6 denied gated call must not reach provider");
+assertTrue(provider.getEmbedCalls() == beforeEmbed, "P02.6 embed call count must stay unchanged after denial");
+budget.release(first.reservationId, "p02_6_cleanup_first");
+budget.release(fill.reservationId, "p02_6_cleanup_fill");
+// Restore a normal daily ceiling for settlement / timeout paths (P02.6 left a tiny test limit).
+queryExecute(
+	"UPDATE budget_days SET limit_usd = CAST(? AS NUMERIC) WHERE day_utc = CAST(? AS DATE)",
+	[ 20, budget.snapshot().dayUtc ]
+);
+
+// --- P02.7: confirmed usage settle, timeout unknown retain, orphan recovery without double spend ---
+okCall = caller.embed("synthetic budget settle", "text-embedding-3-small", 8);
+assertTrue(okCall.ok && okCall.providerCalled, "P02.7 successful embed should settle");
+settled = budget.getReservation(okCall.reservation.reservationId);
+assertTrue(settled.status == "settled" && settled.result == "success", "P02.7 confirmed usage must settle");
+
+provider.setFailNext("timeout");
+timeoutCall = caller.chat("timeout please", "gpt-6-luna");
+assertTrue(structKeyExists(timeoutCall, "timeout") && timeoutCall.timeout == true, "P02.7 timeout path must set timeout");
+assertTrue(timeoutCall.providerCalled == true, "P02.7 timeout still reached provider after reserve");
+unknownRow = budget.getReservation(timeoutCall.reservationId);
+assertTrue(unknownRow.status == "unknown_retained", "P02.7 timeout must retain reservation conservatively");
+
+orphan = budget.reserve("retry", "gpt-6-luna", 0.000001);
+assertTrue(orphan.ok, "P02.7 orphan reserve setup");
+queryExecute(
+	"UPDATE budget_reservations SET created_at = CURRENT_TIMESTAMP - INTERVAL '30 minutes' WHERE id = CAST(? AS BIGINT)",
+	[ toString(orphan.reservationId) ]
+);
+beforeSnap = budget.snapshot();
+recovered = budget.recoverOrphans(15);
+assertTrue(recovered.recoveredCount >= 1, "P02.7 must recover stale reserved rows");
+orphanRow = budget.getReservation(orphan.reservationId);
+assertTrue(orphanRow.status == "unknown_retained", "P02.7 orphan becomes unknown_retained");
+afterSnap = budget.snapshot();
+assertTrue(afterSnap.committedUSD + 0.00000001 >= beforeSnap.committedUSD, "P02.7 orphan recovery must not free committed budget");
+
+secondSettle = budget.settle(okCall.reservation.reservationId, 0.00000001, 1, 0, 1);
+assertTrue(secondSettle.ok == false && secondSettle.reason == "not_open", "P02.7 second settle must be rejected");
+
+println("OK: P02.6 atomic denial without provider call; P02.7 settle/timeout/orphan without double spend.");
