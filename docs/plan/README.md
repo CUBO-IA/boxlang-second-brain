@@ -6,7 +6,7 @@ Este plan organiza el trabajo por fases; cada una se autoriza por separado. Las 
 
 ## Punto de partida
 
-La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`. La fase 00 (viabilidad y decisiones) y la fase 01 (cuentas/espacios) están **Verificadas**. Aún no hay biblioteca/chat de producto completos (fase 02+).
+Las fases 00 y 01 están verificadas. La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`; se probó viabilidad acotada de modelos, vectores, extracción y visores. La fase 02 integra biblioteca privada, tareas, UI y ledger de presupuesto. El núcleo CLI de conocimiento de B sigue separado de la biblioteca; no hay ingesta ni chat de producto conectados. El [registro de revisión](evidence/phase00-review.md) conserva la evidencia anterior; despliegue y rendimiento siguen en fases posteriores.
 
 - **Backend:** BoxLang implementa autenticación, autorización, persistencia, ingesta, tareas, recuperación, respuestas, relaciones y presupuesto. El núcleo de conocimiento permanece reutilizable e independiente de HTTP y Next.js.
 - **Frontend:** Next.js, TypeScript y App Router implementan pantallas, interacción, grafo y visores. Si se necesita una capa de transporte en Next.js, solo delega en BoxLang; no se convierte en un segundo backend de negocio.
@@ -20,9 +20,9 @@ Las dependencias son acumulativas: cerrar una fase antes de avanzar a la siguien
 
 | Fase | Resultado verificable | Estado |
 |---|---|---|
-| [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Decisiones, probes y contratos de viabilidad cerrados; residuos documentados | Verificada |
+| [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Modelos/vectores y subset de extracción/visores comprobados; decisiones/límites registrados y gate aprobado | Verificada |
 | [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Verificada |
-| [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | Pendiente |
+| [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | En curso — A+B+C integrados; cierre de verificación pendiente |
 | [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | Pendiente |
 | [04 — Formatos y previsualizadores](04-formatos-y-previsualizadores.md) | PDF, MD, JSON, código, DOCX, CSV y XLSX con consulta, coordenadas y visor funcional | Pendiente |
 | [05 — URL y GitHub públicos](05-url-y-github-publicos.md) | Importación segura, selección de archivos, procedencia y actualización manual consistente | Pendiente |

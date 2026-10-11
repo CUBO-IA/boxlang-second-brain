@@ -6,7 +6,7 @@ Date: 2026-10-11. Phase 00 is **Verificada** ([phase00-closure.md](phase00-closu
 
 | Item | Status |
 |---|---|
-| 02.7 Budget ledger + atomic reserve | Implemented (`BudgetService`, migration `002`) |
+| 02.7 Budget ledger + atomic reserve | Implemented (`BudgetService`, migration `003` after integration; `002` is library) |
 | 02.8 Conciliation / unknown retain / orphan recovery | Implemented |
 | P02.6 / P02.7 with provider doubles | `tests/budget-p02.bxs` |
 | 03.1 Notes/TXT extraction + stable line ids | `TextNoteExtractor`, `KnowledgeCore.upsertNote` |
@@ -40,14 +40,17 @@ Lexical claim planning filters Spanish/English function words so absent question
 
 ## Commands
 
+**Use an isolated Compose project/database.** The double suites and real-provider probe clear today's ledger (the double knowledge suites also clear all knowledge rows); they require explicit `P02_ISOLATED_DATABASE=YES`. Do not opt in on a database containing real usage or documents.
+
 ```bash
 docker compose exec boxlang boxlang backend/migrations/migrate.bxs
 docker compose exec boxlang boxlang tests/smoke.bxs
-docker compose exec boxlang boxlang tests/budget-p02.bxs
-docker compose exec boxlang boxlang tests/knowledge-core-cli.bxs
-docker compose exec boxlang boxlang tests/knowledge-p03.bxs
+docker compose exec -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/budget-p02.bxs
+docker compose exec -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/knowledge-core-cli.bxs
+docker compose exec -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/knowledge-p03.bxs
 # Authorized paid run only:
 # P00_ALLOW_PROVIDER_CALLS=YES docker compose exec -e P00_ALLOW_PROVIDER_CALLS=YES \
+#   -e P02_ISOLATED_DATABASE=YES \
 #   -e OPENAI_API_KEY -e P00_PRICE_DATE -e P00_PRICE_REFERENCE \
 #   -e P00_CHAT_INPUT_USD_PER_MILLION -e P00_CHAT_OUTPUT_USD_PER_MILLION \
 #   -e P00_EMBED_USD_PER_MILLION boxlang boxlang tests/knowledge-provider.bxs

@@ -1,5 +1,5 @@
 -- Role B: AI budget ledger and knowledge-core fragment storage.
--- Provisional rates/limits follow phase 00 local defaults. Phase 00 remains Bloqueada.
+-- Rates/limits follow the documented phase 00 defaults. Library schema is migration 002.
 
 CREATE TABLE budget_days (
     day_utc DATE PRIMARY KEY,

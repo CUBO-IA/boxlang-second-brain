@@ -27,6 +27,7 @@ services:
     build:
       context: .
     init: true
+    command: ["boxlang-miniserver", "/modules/second-brain/config/miniserver.json"]
     environment:
       BOXLANG_CONFIG: /modules/second-brain/config/boxlang.json
       REWRITES: "false"
@@ -47,6 +48,7 @@ services:
     volumes:
       - .:/modules/second-brain:ro
       - ./backend:/app:ro
+      - originals_data:/data/second-brain
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
@@ -79,3 +81,4 @@ services:
 
 volumes:
   postgres_data:
+  originals_data:

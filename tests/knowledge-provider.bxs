@@ -19,6 +19,7 @@ function blocked(required string reason) {
 }
 
 if ( (env.P00_ALLOW_PROVIDER_CALLS ?: "") != "YES" ) { blocked("P00_ALLOW_PROVIDER_CALLS must equal YES"); abort; }
+if ( (env.P02_ISOLATED_DATABASE ?: "") != "YES" ) { blocked("Use an isolated database and P02_ISOLATED_DATABASE=YES: this test clears today's ledger"); abort; }
 key = env.OPENAI_API_KEY ?: "";
 if ( !len(key) ) { blocked("OPENAI_API_KEY absent"); abort; }
 if ( !reFind("^20[0-9]{2}-[0-9]{2}-[0-9]{2}$", env.P00_PRICE_DATE ?: "") || !len(env.P00_PRICE_REFERENCE ?: "") ) {

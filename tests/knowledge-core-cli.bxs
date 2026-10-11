@@ -4,6 +4,8 @@ import secondBrain.ProviderDouble;
 import secondBrain.TextNoteExtractor;
 import secondBrain.AnswerService;
 
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="This test clears ledger/knowledge data. Use an isolated Compose database and P02_ISOLATED_DATABASE=YES.");
+
 provider = new ProviderDouble();
 core = new KnowledgeCore(provider);
 // Ensure prior tiny-limit budget experiments cannot starve this CLI run.

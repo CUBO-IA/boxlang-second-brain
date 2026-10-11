@@ -4,6 +4,8 @@ import secondBrain.BudgetService;
 import secondBrain.BudgetGatedCaller;
 import secondBrain.ProviderDouble;
 
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="This test clears ledger data. Use an isolated Compose database and P02_ISOLATED_DATABASE=YES.");
+
 function assertTrue(required boolean condition, required string message) {
 	if ( !arguments.condition ) throw( message=arguments.message );
 }

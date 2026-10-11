@@ -1,6 +1,6 @@
 # Fase 01 — Cuentas, espacios y permisos
 
-**Estado:** Verificada y completa para el entorno aislado acreditado. Sol aprobó calidad y gate de fase 01 en su [re-revisión R1](../../.superpowers/sdd/01-cuentas-espacios-y-permisos/sol-rereview-1.md), fechada 2026-10-11. La fase 00 quedó **Verificada** el 2026-10-11 ([cierre](evidence/phase00-closure.md)). [Índice](README.md).
+**Estado:** Verificada y completa para el alcance de fase 01. Sol aprobó calidad/gate en la [revisión estable](evidence/phase01-review.md), fechada 2026-10-11. La fase 00 también queda Verificada tras revisar su follow-up; las pruebas ejecutables de fase 01 pasaron otra vez en la carpeta original, según el [registro de integración](evidence/phase00-review.md). [Índice](README.md).
 
 **Fuente:** [usuarios y espacios](../specification/02-usuarios-y-espacios.md) y [seguridad](../specification/06-arquitectura-y-seguridad.md). **Cobertura:** V01–V03 y V15.
 
@@ -77,7 +77,8 @@ Decisiones exactas: PBKDF2-HMAC-SHA256, 600.000 iteraciones, salt 16 bytes y out
 - Base revisada: `46d9cd31f78392f34e200791d7c4c3c5d409f214`; BoxLang 1.18.0, bx-ai 3.5.0, Compose aislado `second-brain-phase01`.
 - Aprobación independiente: Sol, [registro de revisión](evidence/phase01-review.md), 2026-10-11. Aprobó calidad/gate, cerró R1 y autorizó **Verificada**; aceptó los resultados P01.1–P01.7 y la evidencia de navegador descrita arriba. No se repitieron las pruebas de navegador ni las suites.
 - Cambios acotados de cierre: `APP_ORIGIN` deriva de `FRONTEND_PORT` y admite override explícito; README/.env.example alineados. Comprobaciones de este cierre: `docker compose config` filtrado solo a `APP_ORIGIN` dio `http://127.0.0.1:3002` con `FRONTEND_PORT=3002` y respetó `https://brain.example.test` explícito; `docker compose -p second-brain-phase01 exec -T boxlang boxlang tests/smoke.bxs` → OK; `tests/provider-validation.bxs` → OK; `git diff --check` → OK.
-- El probe proveedor es evidencia aparte, no requisito de autenticación ni de este gate. Consulte [evidencia P00](evidence/provider-phase00.md): llamadas reales válidas, roundtrip pgvector fallido. Fase 00 sigue bloqueada; el avance excepcional de fase 01 no valida P00 ni hostname/TLS.
+- El probe proveedor es evidencia aparte, no requisito de autenticación ni de este gate. El roundtrip fallido histórico se corrigió después y fase 00 se cerró en la [revisión de integración](evidence/phase00-review.md). Esto no acredita despliegue hostname/TLS de fase 08.
 - Entrega en la carpeta original: cambios revisados copiados sin merge/push y sin alterar `.env`, `DESIGN.md`, fases 02–09 ni roles. `docker compose up -d --build --wait` dejó los tres servicios saludables; `docker compose exec -T boxlang boxlang backend/migrations/migrate.bxs` aplicó la migración 1; `docker compose exec -T boxlang boxlang tests/smoke.bxs` pasó. `GET /api/auth/current` por el transporte Next.js rechazó acceso anónimo con `401`. Frontend disponible en `http://127.0.0.1:3000`. No se apagó la computadora.
+- Revalidación al integrar el cierre de fase 00: crypto, expiración DB, HTTP P01.1–P01.7, auditoría y replay de migración pasaron; solo se eliminaron datos del slug sintético `finish-20261011-1849`. Detalles/comandos en el registro de integración.
 
 **No se incluye:** verificación/recuperación por email, registro público en internet ni acceso administrativo a chats privados. **Siguiente:** [fase 02](02-biblioteca-tareas-y-presupuesto.md).
