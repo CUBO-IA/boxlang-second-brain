@@ -409,4 +409,4 @@ Browser puntual en `http://127.0.0.1:3001/`, control nativo real: **DOCX** ense�
 
 ### Estado/commit
 
-La ronda corrige los defectos locales del reporte Sol; no convierte la rúbrica en una evaluación final de fase 06 ni aprueba Office universal. Estado **Bloqueada** hasta clave y tarifas autorizadas para llamadas reales, prueba de modelo/embedding/uso/coste y revisión independiente. Los cambios se guardan en commits estables de esta rama; planes untracked preexistentes siguen fuera del commit. Sin push/merge ni traslado al repositorio original.
+La ronda corrige los defectos locales del reporte Sol; no convierte la rúbrica en una evaluación final de fase 06 ni aprueba Office universal. Estado **Bloqueada** hasta clave y tarifas autorizadas para llamadas reales, prueba de modelo/embedding/uso/coste y revisión independiente. Commit de implementación estable: `29ea429` (`fix: close phase 00 round 3 review findings`). Este registro de evidencia queda en commit docs-only posterior. Los planes untracked preexistentes siguen fuera del commit. Sin push/merge ni traslado al repositorio original.
