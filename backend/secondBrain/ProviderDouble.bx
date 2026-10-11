@@ -1,6 +1,7 @@
 /**
  * In-process provider double for budget and knowledge-core tests.
  * Never contacts OpenAI; tracks whether a call was authorized/reached.
+ * Embeddings are bag-of-tokens with a small ES/EN synonym map for P03.4.
  */
 class {
 	property name="chatCalls" type="numeric" default=0;
@@ -8,6 +9,7 @@ class {
 	property name="failNext" type="string" default="";
 	property name="lastChatPrompt" type="string" default="";
 	property name="lastEmbedText" type="string" default="";
+	property name="forceInsufficient" type="boolean" default=false;
 
 	function init() {
 		variables.chatCalls = 0;
@@ -15,6 +17,7 @@ class {
 		variables.failNext = "";
 		variables.lastChatPrompt = "";
 		variables.lastEmbedText = "";
+		variables.forceInsufficient = false;
 		return this;
 	}
 
@@ -22,19 +25,64 @@ class {
 		variables.failNext = arguments.mode;
 	}
 
+	void function setForceInsufficient(required boolean value) {
+		variables.forceInsufficient = arguments.value;
+	}
+
 	numeric function getChatCalls() { return variables.chatCalls; }
 	numeric function getEmbedCalls() { return variables.embedCalls; }
 
+	private string function normalizeToken(required string token) {
+		var t = lCase(trim(arguments.token));
+		t = reReplace(t, "[^a-z0-9áéíóúñü]+", "", "all");
+		// Minimal bilingual synonyms for cross-language retrieval tests.
+		if ( listFindNoCase("aprobacion,aprobación,approval,approve,granted,concede,conceder", t) ) return "approval";
+		if ( listFindNoCase("solicitar,solicitud,request,apply", t) ) return "request";
+		if ( listFindNoCase("formulario,form", t) ) return "form";
+		if ( listFindNoCase("directora,director,manager", t) ) return "director";
+		if ( listFindNoCase("cumplimiento,compliance", t) ) return "compliance";
+		if ( listFindNoCase("quien,quién,who", t) ) return "who";
+		if ( listFindNoCase("como,cómo,how", t) ) return "how";
+		if ( listFindNoCase("responsable,owner", t) ) return "owner";
+		return t;
+	}
+
+	private array function tokensOf(required string text) {
+		var raw = reReplace(lCase(arguments.text), "[^a-z0-9áéíóúñü]+", " ", "all");
+		var parts = listToArray(raw, " ", false, true);
+		var tokens = [];
+		for ( var part in parts ) {
+			var normalized = normalizeToken(part);
+			if ( len(normalized) ) tokens.append(normalized);
+		}
+		return tokens;
+	}
+
+	private numeric function tokenBucket(required string token, required numeric dimensions) {
+		var javaString = createObject("java", "java.lang.String").init(arguments.token);
+		var hash = 0;
+		for ( var i = 0; i < javaString.length(); i++ ) hash = hash + javaString.codePointAt(i) * (i + 3);
+		return (abs(hash) % arguments.dimensions) + 1;
+	}
+
 	private array function deterministicEmbedding(required string text, numeric dimensions=1536) {
 		var vector = [];
-		var seed = 0;
-		var javaString = createObject("java", "java.lang.String").init(arguments.text);
-		for ( var i = 0; i < javaString.length(); i++ ) seed += javaString.codePointAt(i);
-		for ( var d = 1; d <= arguments.dimensions; d++ ) {
-			var value = ((seed + d) % 97) / 1000;
-			vector.append(value);
+		for ( var d = 1; d <= arguments.dimensions; d++ ) vector.append(0);
+		var tokens = tokensOf(arguments.text);
+		if ( tokens.len() == 0 ) {
+			vector[1] = 1;
+			return vector;
 		}
-		vector[1] = 0.001;
+		for ( var token in tokens ) {
+			var bucket = tokenBucket(token, arguments.dimensions);
+			vector[bucket] = vector[bucket] + 1;
+		}
+		// L2 normalize for stable cosine ranking.
+		var sumSquares = 0;
+		for ( var value in vector ) sumSquares = sumSquares + (value * value);
+		var norm = createObject("java", "java.lang.Math").sqrt(sumSquares);
+		if ( norm <= 0 ) return vector;
+		for ( var i = 1; i <= vector.len(); i++ ) vector[i] = vector[i] / norm;
 		return vector;
 	}
 
@@ -50,7 +98,9 @@ class {
 		variables.chatCalls++;
 		variables.lastChatPrompt = arguments.prompt;
 		var content = "DOUBLE_ANSWER";
-		if ( findNoCase("abstain", arguments.prompt) ) content = "INSUFFICIENT_EVIDENCE";
+		if ( variables.forceInsufficient || findNoCase("INSUFFICIENT_EVIDENCE", arguments.prompt) || findNoCase("abstain", arguments.prompt) ) {
+			content = "INSUFFICIENT_EVIDENCE";
+		}
 		return {
 			model: arguments.model,
 			choices: [ {

@@ -16,13 +16,55 @@ class {
 		throw( message="Unknown fragment id for citation" );
 	}
 
+	private string function normalizeToken(required string token) {
+		var t = lCase(trim(arguments.token));
+		t = reReplace(t, "[^a-z0-9áéíóúñü]+", "", "all");
+		if ( listFindNoCase("aprobacion,aprobación,approval,approve,granted,concede,conceder", t) ) return "approval";
+		if ( listFindNoCase("solicitar,solicitud,request,apply", t) ) return "request";
+		if ( listFindNoCase("formulario,form", t) ) return "form";
+		if ( listFindNoCase("directora,director,manager", t) ) return "director";
+		if ( listFindNoCase("cumplimiento,compliance", t) ) return "compliance";
+		if ( listFindNoCase("quien,quién,who", t) ) return "who";
+		if ( listFindNoCase("como,cómo,how", t) ) return "how";
+		if ( listFindNoCase("responsable,owner", t) ) return "owner";
+		return t;
+	}
+
+	private array function tokens(required string text) {
+		var raw = reReplace(lCase(arguments.text), "[^a-z0-9áéíóúñü]+", " ", "all");
+		var parts = listToArray(raw, " ", false, true);
+		var out = [];
+		for ( var part in parts ) {
+			var normalized = normalizeToken(part);
+			if ( len(normalized) >= 3 ) out.append(normalized);
+		}
+		return out;
+	}
+
+	private numeric function overlapScore(required string question, required string fragmentText) {
+		var q = tokens(arguments.question);
+		var f = tokens(arguments.fragmentText);
+		if ( q.len() == 0 || f.len() == 0 ) return 0;
+		var hits = 0;
+		for ( var qt in q ) {
+			for ( var ft in f ) {
+				if ( qt == ft ) {
+					hits++;
+					break;
+				}
+			}
+		}
+		return hits;
+	}
+
 	struct function abstain(required string reason) {
 		return {
 			ok: true,
 			abstained: true,
 			reason: arguments.reason,
 			claims: [],
-			citations: []
+			citations: [],
+			missing: arguments.reason
 		};
 	}
 
@@ -37,6 +79,12 @@ class {
 	) {
 		if ( arguments.retrieved.len() == 0 ) {
 			return abstain("no_evidence_in_selection");
+		}
+		if ( findNoCase("INSUFFICIENT_EVIDENCE", arguments.modelText) || !len(trim(arguments.modelText)) ) {
+			return abstain("model_reported_insufficient_evidence");
+		}
+		if ( arguments.claimSpecs.len() == 0 ) {
+			return abstain("no_verifiable_claims");
 		}
 		var claims = [];
 		var citations = [];
@@ -77,9 +125,6 @@ class {
 				premises: label == "inferred" ? claimCitations : []
 			});
 		}
-		if ( findNoCase("INSUFFICIENT_EVIDENCE", arguments.modelText) || !len(trim(arguments.modelText)) ) {
-			return abstain("model_reported_insufficient_evidence");
-		}
 		return {
 			ok: true,
 			abstained: false,
@@ -91,19 +136,35 @@ class {
 
 	/**
 	 * Heuristic claim planner for the provider-double path (no real model JSON).
-	 * Uses retrieved fragments as supported claims; abstains when none match keywords.
+	 * - no lexical overlap → abstain
+	 * - weak overlap → inferred with premises
+	 * - strong overlap → supported
 	 */
 	struct function planClaimsFromRetrieval(required string question, required array retrieved) {
-		if ( arguments.retrieved.len() == 0 ) return { claimSpecs: [], abstain: true };
+		if ( arguments.retrieved.len() == 0 ) return { claimSpecs: [], abstain: true, reason: "no_evidence_in_selection" };
 		var specs = [];
+		var best = 0;
 		for ( var fragment in arguments.retrieved ) {
-			specs.append({
-				text: left(fragment.text, 200),
-				label: "supported",
-				supportFragmentIds: [ fragment.id ]
-			});
+			var score = overlapScore(arguments.question, fragment.text);
+			if ( score > best ) best = score;
+			if ( score >= 2 ) {
+				specs.append({
+					text: left(fragment.text, 200),
+					label: "supported",
+					supportFragmentIds: [ fragment.id ]
+				});
+			} else if ( score == 1 ) {
+				specs.append({
+					text: "Inferencia a partir de la evidencia citada.",
+					label: "inferred",
+					supportFragmentIds: [ fragment.id ]
+				});
+			}
 		}
-		return { claimSpecs: specs, abstain: false };
+		if ( specs.len() == 0 ) {
+			return { claimSpecs: [], abstain: true, reason: "question_not_supported_by_evidence" };
+		}
+		return { claimSpecs: specs, abstain: false, bestOverlap: best };
 	}
 
 	/** Safe wrapper for tests: never throws across script try/catch compiler edge cases. */

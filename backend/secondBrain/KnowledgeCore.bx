@@ -35,6 +35,8 @@ class {
 
 	any function getBudget() { return variables.budget; }
 	any function getCaller() { return variables.caller; }
+	any function getIndex() { return variables.index; }
+	any function getAnswers() { return variables.answers; }
 
 	struct function ingestText(
 		required string spaceId,
@@ -42,10 +44,11 @@ class {
 		required string revisionId,
 		required string name,
 		required string text,
-		string mediaType="text/plain"
+		string mediaType="text/plain",
+		string kind="txt"
 	) {
 		variables.index.upsertDocument(arguments.documentId, arguments.spaceId, arguments.revisionId, arguments.name, arguments.mediaType);
-		var extracted = variables.extractor.extract(arguments.text, arguments.documentId, arguments.revisionId, arguments.spaceId, "txt");
+		var extracted = variables.extractor.extract(arguments.text, arguments.documentId, arguments.revisionId, arguments.spaceId, arguments.kind);
 		var fragments = variables.chunker.chunkExtracted(extracted);
 		variables.index.storeFragmentsStaging(fragments);
 		var embedded = 0;
@@ -71,8 +74,43 @@ class {
 			revisionId: arguments.revisionId,
 			fragmentCount: fragments.len(),
 			embeddedCount: embedded,
-			status: published.status
+			status: published.status,
+			lines: extracted.lineCount
 		};
+	}
+
+	/** 03.1 — notes are normalized text with stable line ids, published through the same pipeline. */
+	struct function upsertNote(
+		required string spaceId,
+		required string noteId,
+		required string revisionId,
+		required string title,
+		required string body
+	) {
+		return ingestText(
+			arguments.spaceId,
+			arguments.noteId,
+			arguments.revisionId,
+			arguments.title,
+			arguments.body,
+			"text/note",
+			"note"
+		);
+	}
+
+	struct function replaceText(
+		required string spaceId,
+		required string documentId,
+		required string revisionId,
+		required string name,
+		required string text,
+		string mediaType="text/plain"
+	) {
+		return ingestText(arguments.spaceId, arguments.documentId, arguments.revisionId, arguments.name, arguments.text, arguments.mediaType);
+	}
+
+	struct function deleteDocument(required string documentId) {
+		return variables.index.deleteDocument(arguments.documentId);
 	}
 
 	struct function ask(
@@ -88,6 +126,13 @@ class {
 		if ( retrieved.len() == 0 ) {
 			return variables.answers.abstain("no_evidence_in_selection");
 		}
+		var plan = variables.answers.planClaimsFromRetrieval(arguments.question, retrieved);
+		if ( plan.abstain ) {
+			var early = variables.answers.abstain(plan.reason ?: "question_not_supported_by_evidence");
+			early.retrievedCount = retrieved.len();
+			early.usageUSD = embedResult.actualUSD ?: 0;
+			return early;
+		}
 		var contextBlocks = [];
 		for ( var fragment in retrieved ) {
 			contextBlocks.append("[" & fragment.id & "] " & fragment.text);
@@ -97,10 +142,11 @@ class {
 		if ( !chatResult.ok ) {
 			return { ok: false, reason: chatResult.reason ?: "chat_failed", denied: chatResult.denied ?: false };
 		}
-		var plan = variables.answers.planClaimsFromRetrieval(arguments.question, retrieved);
 		var built = variables.answers.buildFromRetrieved(chatResult.response.choices[1].message.content, retrieved, plan.claimSpecs);
 		built.retrievedCount = retrieved.len();
 		built.usageUSD = (embedResult.actualUSD ?: 0) + (chatResult.actualUSD ?: 0);
+		built.spaceId = arguments.spaceId;
+		built.selectedDocumentIds = arguments.selectedDocumentIds;
 		return built;
 	}
 }

@@ -1,0 +1,79 @@
+// Role B — P03.2, P03.3, P03.4, P03.6, P03.8, P03.9 with provider doubles (no OpenAI).
+import secondBrain.KnowledgeCore;
+import secondBrain.ProviderDouble;
+
+provider = new ProviderDouble();
+core = new KnowledgeCore(provider);
+
+day = core.getBudget().snapshot().dayUtc;
+queryExecute("DELETE FROM budget_reservations WHERE day_utc = CAST(? AS DATE)", [ day ]);
+queryExecute(
+	"INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), CAST(? AS NUMERIC)) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = EXCLUDED.limit_usd",
+	[ day, 20 ]
+);
+queryExecute("DELETE FROM knowledge_fragments");
+queryExecute("DELETE FROM knowledge_documents");
+
+space = "space-p03";
+spaceOther = "space-other";
+docEs = "doc-es";
+docEn = "doc-en";
+docNoise = "doc-noise";
+
+ingestEs = core.ingestText(space, docEs, "r1", "solicitud.txt", "Para solicitar la aprobacion envia el formulario al area legal.");
+ingestEn = core.ingestText(space, docEn, "r1", "approval.txt", "Approval is granted by the compliance director.");
+ingestNoise = core.ingestText(space, docNoise, "r1", "menu.txt", "La cafeteria abre a las nueve.");
+note = core.upsertNote(space, "note-1", "r1", "Nota interna", "El responsable de aprobacion es la directora de cumplimiento.");
+if ( !ingestEs.ok || !ingestEn.ok || !ingestNoise.ok || !note.ok ) throw( message="P03 setup ingest failed" );
+
+// P03.2 — selection must not widen
+onlyNoise = core.ask(space, [ docNoise ], "Who grants approval?");
+if ( !onlyNoise.ok ) throw( message="P03.2 query failed" );
+if ( !onlyNoise.abstained ) throw( message="P03.2 must abstain when selected docs lack evidence" );
+
+// P03.3 — absent question abstains; inference path when weak overlap
+absent = core.ask(space, [ docEs, docEn ], "Cual es el color del logo corporativo?");
+if ( !absent.abstained ) throw( message="P03.3 absent question must abstain" );
+
+inferred = core.ask(space, [ docEs ], "Necesito el formulario");
+if ( !inferred.ok ) throw( message="P03.3 inferred query failed" );
+if ( inferred.abstained ) throw( message="P03.3 expected an answer with form evidence" );
+if ( inferred.claims.len() < 1 ) throw( message="P03.3 expected labeled claims" );
+if ( inferred.claims[1].label != "supported" && inferred.claims[1].label != "inferred" ) {
+	throw( message="P03.3 unexpected claim label" );
+}
+if ( inferred.claims[1].label == "inferred" && inferred.claims[1].premises.len() == 0 ) {
+	throw( message="P03.3 inferred claims need premises" );
+}
+
+// P03.4 — ES question over EN source (synonym embeddings) without mixing spaces
+cross = core.ask(space, [ docEn ], "Quien concede la aprobacion?");
+if ( !cross.ok || cross.abstained ) throw( message="P03.4 ES→EN retrieval should find approval evidence" );
+if ( cross.citations.len() < 1 || cross.citations[1].documentId != docEn ) {
+	throw( message="P03.4 citation escaped selected EN document" );
+}
+foreignSpace = core.ask(spaceOther, [ docEn ], "Who grants approval?");
+if ( !foreignSpace.abstained ) throw( message="P03.4 must not retrieve across spaces" );
+
+// P03.6 — replace then delete; old revision must not answer
+replaced = core.replaceText(space, docEs, "r2", "solicitud.txt", "El proceso de vacaciones se envia a RRHH.");
+if ( !replaced.ok || replaced.status != "indexed" ) throw( message="P03.6 replace failed" );
+afterReplace = core.ask(space, [ docEs ], "Como solicito la aprobacion legal?");
+if ( !afterReplace.abstained ) throw( message="P03.6 replaced doc must not keep old approval evidence" );
+core.deleteDocument(docEn);
+afterDelete = core.ask(space, [ docEn ], "Who grants approval?");
+if ( !afterDelete.abstained ) throw( message="P03.6 deleted doc must yield abstention" );
+
+// P03.8 — invalid citation rejected
+invalid = core.getAnswers().tryBuildFromRetrieved(
+	"x",
+	[ { id: "f1", documentId: "d1", text: "t", location: { kind: "lines", lineStart: 1, lineEnd: 1 } } ],
+	[ { text: "bad", label: "supported", supportFragmentIds: [ "missing" ] } ]
+);
+if ( invalid.ok ) throw( message="P03.8 invalid citation must be rejected" );
+
+// P03.9 — note path reusable without Next.js
+noteAsk = core.ask(space, [ "note-1" ], "Quien es el responsable de aprobacion?");
+if ( !noteAsk.ok || noteAsk.abstained ) throw( message="P03.9 note ingest/ask failed" );
+
+println("OK: P03.2/P03.3/P03.4/P03.6/P03.8/P03.9 Role B core checks with doubles.");
