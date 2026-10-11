@@ -22,7 +22,7 @@ Las dependencias son acumulativas: cerrar una fase antes de avanzar a la siguien
 |---|---|---|
 | [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Modelos/vectores y subset de extracción/visores comprobados; decisiones/límites registrados y gate aprobado | Verificada |
 | [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Verificada |
-| [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | En curso — A+B+C integrados; cierre de verificación pendiente |
+| [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | Verificada |
 | [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | Pendiente |
 | [04 — Formatos y previsualizadores](04-formatos-y-previsualizadores.md) | PDF, MD, JSON, código, DOCX, CSV y XLSX con consulta, coordenadas y visor funcional | Pendiente |
 | [05 — URL y GitHub públicos](05-url-y-github-publicos.md) | Importación segura, selección de archivos, procedencia y actualización manual consistente | Pendiente |

@@ -101,7 +101,7 @@ La biblioteca todavía no conecta ingesta multiformato, recuperación con eviden
 
 ## Fase 02 — integración A+B+C
 
-Migración 2 de biblioteca, migración 3 de presupuesto/conocimiento y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. El aviso presupuestario usa el ledger de B, sin exponer consumo ajeno. **Fase En curso:** A+B+C integrados; falta el cierre de verificación indicado en el plan. No se activa ingesta ni IA. [Evidencia de integración](docs/plan/evidence/phase02-merge.md).
+Migración 2 de biblioteca, migración 3 de presupuesto/conocimiento y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. El aviso presupuestario usa el ledger de B, sin exponer consumo ajeno. **Fase 02 Verificada:** concurrencia, recuperación tras reinicio y UI aprobadas sin IA. No se activa ingesta ni IA. [Evidencia de cierre](docs/plan/evidence/phase02-closure.md).
 
 ```sh
 docker compose up -d --no-deps --wait boxlang

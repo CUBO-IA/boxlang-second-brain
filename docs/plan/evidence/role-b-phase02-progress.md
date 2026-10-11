@@ -1,5 +1,7 @@
 # Role B progress — budget and knowledge core
 
+**Subsequent integration:** phase 02 is now **Verificada**, with concurrent budget calls, actual restart recovery and real library UI checked in [phase02-closure.md](phase02-closure.md). The original role-only claims below remain historical; phase 03 is not closed.
+
 Date: 2026-10-11. Phase 00 is **Verificada** ([phase00-closure.md](phase00-closure.md)). Role B continues on phase 02.7–02.8 and phase 03 core seams without claiming full phase closure (Role A library/tasks and Role C UI still required).
 
 ## Delivered

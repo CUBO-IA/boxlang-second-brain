@@ -1,6 +1,6 @@
 # Fase 02 — Biblioteca, tareas y presupuesto
 
-**Estado:** En curso. A+B+C integrados: biblioteca/UI reales y ledger de presupuesto con pruebas de B aprobadas sin IA. Falta el cierre de verificación: concurrencia real de reservas y recuperación de presupuesto tras reinicio real, no solo simulación. [Informe A](evidence/phase02-platform-security.md), [entrega B](evidence/role-b-phase02-progress.md), [integración](evidence/phase02-merge.md). **Dependencia:** [fase 01](01-cuentas-espacios-y-permisos.md) verificada. [Índice](README.md).
+**Estado:** Verificada (2026-10-11). A+B+C integrados; P02.1–P02.7 y checklist de UI aprobados con base/archivos/API reales y dobles de proveedor, sin llamadas IA. Concurrencia y reinicio de presupuesto comprobados realmente. [Cierre y comandos](evidence/phase02-closure.md), [integración previa](evidence/phase02-merge.md). **Dependencia:** [fase 01](01-cuentas-espacios-y-permisos.md) verificada. [Índice](README.md).
 
 **Fuente:** [ingesta](../specification/03-ingesta-y-documentos.md), [arquitectura](../specification/06-arquitectura-y-seguridad.md) y [operación](../specification/07-operacion-y-limites.md). **Cobertura:** V03, V05–V08, V16–V18.
 
@@ -35,11 +35,11 @@ Las garantías de publicación se prueban primero con archivos y registros. En f
 
 ## Frontend Next.js: pantallas y comportamiento
 
-- [ ] Biblioteca del espacio con documento, fuente/formato, tamaño, estado e información útil del fallo; nunca mostrar archivos de otros espacios durante cambio de selección.
-- [ ] Carga individual y múltiple con resultado por archivo. En un lote mixto, diferenciar aceptados y rechazados sin afirmar éxito completo.
-- [ ] Acciones autorizadas de reemplazo, borrado y reintento; un lector solo consulta. Indicar que borrar conserva mensajes históricos y posibles extractos.
-- [ ] Mostrar procesamiento y cambios de estado con el mecanismo mínimo validado; diferenciar permiso, límite, formato, presupuesto y proveedor.
-- [ ] Informar del envío de contenido/consultas a OpenAI y del límite presupuestario, sin exponer clave ni datos de otras personas.
+- [x] Biblioteca del espacio con documento, fuente/formato, tamaño, estado e información útil del fallo; nunca mostrar archivos de otros espacios durante cambio de selección.
+- [x] Carga individual y múltiple con resultado por archivo. En un lote mixto, diferenciar aceptados y rechazados sin afirmar éxito completo.
+- [x] Acciones autorizadas de reemplazo, borrado y reintento; un lector solo consulta. Indicar que borrar conserva mensajes históricos y posibles extractos.
+- [x] Mostrar procesamiento y cambios de estado con el mecanismo mínimo validado; diferenciar permiso, límite, formato, presupuesto y proveedor.
+- [x] Informar del envío de contenido/consultas a OpenAI y del límite presupuestario, sin exponer clave ni datos de otras personas.
 
 ## Pruebas de cierre
 
@@ -57,8 +57,17 @@ Los dobles de proveedor sirven para estas pruebas de fallo/consumo; no acreditan
 
 ## Entregables y criterio de finalización
 
-- [ ] Migraciones, volumen y operaciones de biblioteca/tareas reales; contrato de estados, errores y reintentos documentado.
-- [ ] Política de publicación y limpieza probada con fallos; presupuesto reutilizable obligatorio en las llamadas de fases siguientes.
-- [ ] P02.1–P02.7 aprobadas, scripts y evidencia de UI registrados. La fase cierra el control de almacenamiento/tareas, no la recuperación de conocimiento.
+- [x] Migraciones, volumen y operaciones de biblioteca/tareas reales; contrato de estados, errores y reintentos documentado.
+- [x] Política de publicación y limpieza probada con fallos; presupuesto reutilizable obligatorio en las llamadas de fases siguientes.
+- [x] P02.1–P02.7 aprobadas, scripts y evidencia de UI registrados. La fase cierra el control de almacenamiento/tareas, no la recuperación de conocimiento.
+
+## Registro de cierre
+
+- **Fecha / responsable:** 2026-10-11 / agente OpenCode, por petición de cierre de fase 02.
+- **Base y cambios revisados:** `442c49c` (PR A/B/C integrados); correcciones acotadas en presupuesto, caller y recuperación de arranque; pruebas ampliadas, sin worker nuevo.
+- **Entorno:** Compose aislado `second-brain-phase02-close`; BoxLang 1.18.0+66, bx-ai 3.5.0, PostgreSQL 17/pgvector 0.8.7, Next.js 16.4.0; datos sintéticos del slug `close-20261011`.
+- **Resultados:** P02.1–P02.7 aprobadas, UI ES/EN y roles comprobados; regresión de cuentas/conocimiento con dobles, vectores, TypeScript, lint y build aprobada. Comandos y límites en [evidencia de cierre](evidence/phase02-closure.md).
+- **Consumo IA:** cero llamadas y USD 0 reales; importes de pruebas exclusivamente sintéticos. Sin bloqueos pendientes de fase 02.
+- **Límite:** publicación/limpieza comprobada con callbacks sintéticos; ingesta, vectores/relaciones de producto y chat deben conectarse y volver a verificarse en sus fases. La fase 03 no se declara verificada ni se activa automáticamente.
 
 **No se incluye:** S3, historial navegable de versiones, papelera ni un servicio de colas no justificado. **Siguiente:** [fase 03](03-ingesta-chat-y-evidencia.md).

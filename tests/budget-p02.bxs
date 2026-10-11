@@ -13,6 +13,25 @@ function assertTrue(required boolean condition, required string message) {
 budget = new BudgetService();
 provider = new ProviderDouble();
 caller = new BudgetGatedCaller(budget, provider);
+mode = getSystemSetting("P02_BUDGET_MODE", "checks");
+run = getSystemSetting("P02_RUN", "");
+if ( !listFind("checks,before,after", mode) || (mode != "checks" && reFind("^[a-z0-9-]{1,40}$", run) != 1) ) throw(message="Explicit restart mode requires P02_RUN");
+fixture = "/data/second-brain/test-fixtures/budget-#run#.json";
+
+if ( mode == "after" ) {
+	state = jsonDeserialize(fileRead(fixture));
+	assertTrue(budget.getReservation(state.orphan).status == "unknown_retained", "Startup must recover the pre-restart orphan, without this test calling recovery");
+	assertTrue(budget.getReservation(state.active).status == "reserved", "Startup must not steal an unexpired reservation");
+	assertTrue(budget.snapshot(state.day).committedUSD == state.committed, "Restart/recovery must not release any committed budget");
+	assertTrue(!budget.release(state.orphan).ok, "Unknown provider consumption cannot be released");
+	assertTrue(budget.recoverOrphans().recoveredCount == 0, "Repeated recovery is idempotent");
+	assertTrue(budget.settle(state.orphan, 0.000001, 10, 0, 10).ok, "Confirmed late usage can settle the recovered reservation");
+	assertTrue(!budget.settle(state.orphan, 0.000001, 10, 0, 10).ok, "Late settlement cannot apply twice");
+	assertTrue(budget.release(state.active).ok && !budget.release(state.active).ok, "Unused active reservation is released exactly once");
+	fileDelete(fixture);
+	println("OK P02.7: persisted budget across REAL restart, automatic orphan recovery, active reservation retained, no double release/settlement.");
+	abort;
+}
 
 // Self-contained ledger: clear today's rows so prior runs cannot exhaust the tiny ceiling.
 day = budget.snapshot().dayUtc;
@@ -24,6 +43,44 @@ queryExecute(
 
 // Use an isolated tiny ceiling for denial math on today's ledger.
 tinyLimit = 0.00005;
+
+// Real simultaneous gate calls on different JDBC connections. Hold the accepted
+// call inside the provider until the other call is denied, so settlement cannot
+// free its reservation early and accidentally turn this into a sequential test.
+queryExecute("UPDATE budget_days SET limit_usd = CAST(? AS NUMERIC) WHERE day_utc = CAST(? AS DATE)", [tinyLimit, day]);
+ready = createObject("java", "java.util.concurrent.CountDownLatch").init(2);
+start = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+denied = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+finish = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+calls = createObject("java", "java.util.concurrent.atomic.AtomicInteger").init(0);
+seconds = createObject("java", "java.util.concurrent.TimeUnit").SECONDS;
+blockingProvider = {embed: (text, model) => {
+	calls.incrementAndGet();
+	if ( !finish.await(10, seconds) ) throw(message="Test provider was not released");
+	return {data: [{embedding: [1]}], usage: {prompt_tokens: 1}};
+}};
+for (i = 1; i <= 2; i++) {
+	bx:thread name="budgetRace#i#" {
+		variables.ready.countDown();
+		if ( !variables.start.await(10, variables.seconds) ) throw(message="Race did not start");
+		thread.result = new BudgetGatedCaller(new BudgetService(), variables.blockingProvider).embed("x", "text-embedding-3-small", 1500);
+		if ( thread.result.denied ) variables.denied.countDown();
+	}
+}
+try {
+	assertTrue(ready.await(10, seconds), "Both contenders must be ready");
+	start.countDown();
+	assertTrue(denied.await(10, seconds), "One concurrent call must be denied while the other is still in the provider");
+	assertTrue(calls.get() == 1, "Only one contender reaches the provider");
+} finally {
+	start.countDown(); finish.countDown();
+	bx:thread action="join" name="budgetRace1,budgetRace2" timeout=15000;
+}
+assertTrue(structKeyExists(bxthread.budgetRace1, "result") && structKeyExists(bxthread.budgetRace2, "result"), "Concurrent callers must finish without thread errors");
+assertTrue(bxthread.budgetRace1.result.ok != bxthread.budgetRace2.result.ok, "Exactly one concurrent gate succeeds");
+assertTrue(budget.snapshot().committedUSD <= tinyLimit, "Concurrent reservations never exceed the ceiling");
+queryExecute("DELETE FROM budget_reservations WHERE day_utc = CAST(? AS DATE)", [day]);
+println("OK P02.6: two simultaneous budget-gated calls, one denial, exactly one provider invocation.");
 
 // --- P02.6: atomic reserves; denied calls never reach the provider ---
 first = budget.reserve("embed", "text-embedding-3-small", 0.00003, tinyLimit);
@@ -81,3 +138,41 @@ secondSettle = budget.settle(okCall.reservation.reservationId, 0.00000001, 1, 0,
 assertTrue(secondSettle.ok == false && secondSettle.reason == "not_open", "P02.7 second settle must be rejected");
 
 println("OK: P02.6 atomic denial without provider call; P02.7 settle/timeout/orphan without double spend.");
+
+// No usage is not zero usage. Keep the whole reservation until confirmation.
+noUsage = new BudgetGatedCaller(budget, {chat: (prompt, model, maxCompletionTokens) => {
+	return {choices: [{message: {content: "synthetic"}}]};
+}}).chat("synthetic", "gpt-6-luna");
+assertTrue(!noUsage.ok && noUsage.reason == "provider_usage_unknown", "Missing usage cannot be reported as settled success");
+assertTrue(budget.getReservation(noUsage.reservationId).status == "unknown_retained", "Missing usage retains reservation");
+invalidUsage = new BudgetGatedCaller(budget, {embed: (text, model) => {return {usage: {prompt_tokens: -1}};}}).embed("x", "text-embedding-3-small");
+assertTrue(invalidUsage.reason == "provider_usage_unknown", "Malformed provider usage is unconfirmed, not free");
+
+// Check the output cap actually sent to the provider, and the UTF-8 input bound.
+bounded = new BudgetGatedCaller(budget, {chat: (prompt, model, maxCompletionTokens) => {
+	assertTrue(maxCompletionTokens == 32, "Provider receives exactly the reserved completion cap");
+	return {usage: {prompt_tokens: 1, completion_tokens: 0}};
+}}).chat("漢字😀", "gpt-6-luna", 1, 32);
+assertTrue(bounded.ok && bounded.reservation.estimatedUSD >= budget.estimateChatUSD(len(charsetDecode("漢字😀", "UTF-8")) + 64, 32), "Unicode input estimate is conservative");
+assertTrue(!caller.embed(repeatString("x", 8193), "text-embedding-3-small").providerCalled, "Oversized input never reaches provider");
+assertTrue(!caller.chat("x", "gpt-6-luna", 32, 4097).providerCalled, "Unbounded output never reaches provider");
+
+// A real confirmed overrun is still a cost, even if it exceeds the ceiling.
+queryExecute("UPDATE budget_days SET limit_usd = 20 WHERE day_utc = CAST(? AS DATE)", [day]);
+overrun = budget.reserve("chat", "gpt-6-luna", 0.000001);
+settlement = budget.settle(overrun.reservationId, 21, 1, 1, 2);
+assertTrue(!settlement.ok && budget.getReservation(overrun.reservationId).status == "settled", "Record confirmed overrun, never pretend its usage is unknown");
+assertTrue(budget.snapshot().committedUSD >= 21 && budget.snapshot().availableUSD == 0, "Full overrun is counted, availability stays nonnegative");
+assertTrue(!budget.reserve("retry", "gpt-6-luna", 0.000001).ok, "Overrun blocks further calls");
+queryExecute("DELETE FROM budget_reservations WHERE id = CAST(? AS BIGINT)", [overrun.reservationId]);
+println("OK V17: conservative input/output bounds, missing/invalid usage retained, confirmed overrun fully counted.");
+
+if ( mode == "before" ) {
+	assertTrue(!fileExists(fixture), "Do not overwrite an existing restart fixture");
+	if ( !directoryExists(getDirectoryFromPath(fixture)) ) directoryCreate(getDirectoryFromPath(fixture));
+	orphan = budget.reserve("retry", "gpt-6-luna", 0.000003);
+	active = budget.reserve("embed", "text-embedding-3-small", 0.000002);
+	queryExecute("UPDATE budget_reservations SET created_at = CURRENT_TIMESTAMP - INTERVAL '30 minutes' WHERE id = CAST(? AS BIGINT)", [orphan.reservationId]);
+	fileWrite(fixture, jsonSerialize({orphan: orphan.reservationId, active: active.reservationId, day: day, committed: budget.snapshot().committedUSD}));
+	println("PREPARED P02.7: restart BoxLang now; run with P02_BUDGET_MODE=after only after healthy startup.");
+}

@@ -41,6 +41,6 @@ docker compose -p second-brain-phase02-merge exec -T -e P02_ISOLATED_DATABASE=YE
 docker compose -p second-brain-phase02-merge exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/knowledge-p03.bxs
 ```
 
-La fase permanece **En curso**, no Verificada: P02.6 de B comprueba denegación secuencial, no dos reservas realmente simultáneas; P02.7 envejece una fila y ejecuta recuperación, pero no acredita un reinicio real con la reserva abierta. Esas comprobaciones y el checklist final de UI siguen pendientes. No se activa ningún worker ni se acredita ingesta real/fase 03; no hubo llamadas ni gasto de IA durante esta integración.
+Al terminar este merge la fase permaneció **En curso**: faltaban reservas realmente simultáneas, reinicio real con reserva abierta y checklist final de UI. Esos pendientes se comprobaron posteriormente en el [cierre de fase 02](phase02-closure.md), que fija el estado actual **Verificada**. No se activó ningún worker ni se acreditó ingesta real/fase 03; no hubo llamadas ni gasto de IA durante esta integración.
 
 Para actualizar una base de `main`, aplicar migraciones antes de servir biblioteca. Una base experimental que ya hubiera usado `002` para B no es una base de `main`: no editar `schema_migrations` ni recrear volúmenes con datos; requiere revisión específica antes de actualizar.

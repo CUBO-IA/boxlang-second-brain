@@ -19,10 +19,9 @@ class {
 
 	private numeric function asMoney(required any value) {
 		if ( !isFiniteNumber(arguments.value) ) throw( message="Budget amount must be a finite number" );
-		var decimal = createObject("java", "java.math.BigDecimal").init(arguments.value.toString())
-			.setScale(8, createObject("java", "java.math.RoundingMode").HALF_UP);
+		var decimal = createObject("java", "java.math.BigDecimal").init(arguments.value.toString());
 		if ( decimal.signum() < 0 ) throw( message="Budget amount cannot be negative" );
-		return decimal.doubleValue();
+		return decimal.setScale(8, createObject("java", "java.math.RoundingMode").HALF_UP).doubleValue();
 	}
 
 	private string function todayUtc() {
@@ -64,7 +63,7 @@ class {
 			"
 			SELECT COALESCE(SUM(
 				CASE
-					WHEN status IN ('reserved', 'unknown_retained') THEN reserved_usd
+					WHEN status IN ('reserved', 'unknown_retained') THEN GREATEST(reserved_usd, COALESCE(actual_usd, 0))
 					WHEN status = 'settled' THEN actual_usd
 					ELSE 0
 				END
@@ -103,7 +102,7 @@ class {
 			dayUtc: day,
 			limitUSD: limit,
 			committedUSD: committed,
-			availableUSD: asMoney(limit - committed),
+			availableUSD: asMoney(max(0, limit - committed)),
 			rates: ratesFromEnv()
 		};
 	}
@@ -236,28 +235,9 @@ class {
 			}
 			var day = dateFormat(reservation.day_utc, "yyyy-MM-dd");
 			queryExecute("SELECT day_utc FROM budget_days WHERE day_utc = CAST(? AS DATE) FOR UPDATE", [ day ]);
-			if ( actual > asMoney(reservation.reserved_usd) ) {
-				var committedWithout = committedUsd(day) - asMoney(reservation.reserved_usd);
-				var dayRow = queryExecute(
-					"SELECT limit_usd FROM budget_days WHERE day_utc = CAST(? AS DATE)",
-					[ day ],
-					{ returntype: "array" }
-				);
-				var limit = asMoney(dayRow[1].limit_usd);
-				if ( committedWithout + actual > limit ) {
-					queryExecute(
-						"
-						UPDATE budget_reservations
-						SET status = 'unknown_retained', result = 'unknown', actual_usd = CAST(? AS NUMERIC),
-							prompt_tokens = CAST(? AS INTEGER), completion_tokens = CAST(? AS INTEGER),
-							total_tokens = CAST(? AS INTEGER), error_safe = ?, updated_at = CURRENT_TIMESTAMP
-						WHERE id = CAST(? AS BIGINT)
-						",
-						[ actual, arguments.promptTokens, arguments.completionTokens, arguments.totalTokens, "actual_exceeds_budget", arguments.reservationId ]
-					);
-					return { ok: false, reason: "actual_exceeds_budget", status: "unknown_retained", reservationId: arguments.reservationId };
-				}
-			}
+			var committedWithout = committedUsd(day) - max(asMoney(reservation.reserved_usd), isNull(reservation.actual_usd) ? 0 : asMoney(reservation.actual_usd));
+			var dayRow = queryExecute("SELECT limit_usd FROM budget_days WHERE day_utc = CAST(? AS DATE)", [ day ], {returntype: "array"});
+			var exceeded = committedWithout + actual > asMoney(dayRow[1].limit_usd);
 			queryExecute(
 				"
 				UPDATE budget_reservations
@@ -269,7 +249,8 @@ class {
 				[ arguments.result, actual, arguments.promptTokens, arguments.completionTokens, arguments.totalTokens, arguments.reservationId ]
 			);
 			return {
-				ok: true,
+				ok: !exceeded,
+				reason: exceeded ? "actual_exceeds_budget" : "settled",
 				reservationId: arguments.reservationId,
 				status: "settled",
 				actualUSD: actual,
