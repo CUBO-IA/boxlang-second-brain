@@ -11,6 +11,7 @@ FRONTEND_PORT=3005 BACKEND_PORT=8085 POSTGRES_PORT=55438 P00_ALLOW_PROVIDER_CALL
 docker compose -p second-brain-phase03-evidence exec -T boxlang boxlang backend/migrations/migrate.bxs
 docker compose -p second-brain-phase03-evidence exec -T boxlang boxlang tests/smoke.bxs
 docker compose -p second-brain-phase03-evidence exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/phase03-registration-scope.bxs
+docker compose -p second-brain-phase03-evidence exec -T boxlang boxlang tests/phase03-inference-validation.bxs
 docker compose -p second-brain-phase03-evidence exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/pipeline-p03.bxs
 docker compose -p second-brain-phase03-evidence exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/conversation-migration-v5.bxs
 docker compose -p second-brain-phase03-evidence exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/conversation-p03.bxs
@@ -20,7 +21,7 @@ docker compose -p second-brain-phase03-evidence exec -T frontend pnpm exec tsc -
 docker compose -p second-brain-phase03-evidence exec -T frontend pnpm lint
 ```
 
-Las suites deterministas usan dobles, pero algunas escriben/eliminan datos y por eso exigen la base aislada. `phase03-registration-scope.bxs` no llama a proveedores y verifica el fallo del identificador sin calificar y el registro correcto con `local.request`. La prueba de migración v5 lee `backend/migrations/005_conversation_turn_lease.sql`, archivo incluido en el repo. No se incluye `phase03-auth-errors.mjs` como comando del contenedor frontend: su import relativo apunta fuera de las rutas montadas ahí.
+Las suites deterministas usan dobles, pero algunas escriben/eliminan datos y por eso exigen la base aislada. `phase03-registration-scope.bxs` reproduce sin proveedor el fallo del identificador sin calificar y verifica el registro con `local.request`; `phase03-inference-validation.bxs` valida inferencias/premisas/citas sin red ni base de datos. La prueba de migración v5 lee `backend/migrations/005_conversation_turn_lease.sql`, archivo incluido en el repo. No se incluye `phase03-auth-errors.mjs` como comando del contenedor frontend: su import relativo apunta fuera de las rutas montadas ahí.
 
 ## Fixture y recorrido de navegador
 
@@ -35,7 +36,7 @@ El primer comando imprime los correos y la contraseña sintética de owner/reade
 
 ## Gate real autorizado
 
-`tests/phase03-provider-acceptance.bxs` pasó una vez con datos sintéticos en Compose aislado. El 500 original se debía al test: en este runtime `request` sin calificar resuelve al scope incorporado (sin `method`), no a `var request`; el registro correcto usa `local.request`. `AccountService` y su captura HTTP segura no se modificaron. Reproducción no facturable: `tests/phase03-registration-scope.bxs`.
+`tests/phase03-provider-acceptance.bxs` pasó con datos sintéticos en Compose aislado. El 500 original se debía al test: en este runtime `request` sin calificar resuelve al scope incorporado (sin `method`), no a `var request`; el registro correcto usa `local.request`. `AccountService` y su captura HTTP segura no se modificaron. Reproducción no facturable: `tests/phase03-registration-scope.bxs`.
 
 Comando ejecutado con opt-in solo para ese proceso, base aislada y techo USD 1:
 
@@ -43,6 +44,20 @@ Comando ejecutado con opt-in solo para ese proceso, base aislada y techo USD 1:
 bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T -e P00_ALLOW_PROVIDER_CALLS=YES -e P02_ISOLATED_DATABASE=YES -e P00_MAX_USD=1 -e BUDGET_DAILY_USD=1 boxlang boxlang tests/phase03-provider-acceptance.bxs
 ```
 
-Resultado **PASS**: 15 reservas nuevas (942–956), las 15 liquidadas, cero retenidas; 9 llamadas de embedding y 6 de chat. Coste real de esta ejecución: **USD 0.00033950** (embeddings USD 0.00000470; chat USD 0.00033480). Committed total del día: **USD 0.00042078** bajo el límite persistido **USD 1.00000000**; se conserva la reserva 941 (settled, actual USD 0.00000040). Tras el comando, el entorno del servicio sigue con `P00_ALLOW_PROVIDER_CALLS=NO`; no se expuso la clave. Evidencia externa detallada: `/tmp/opencode/phase03-corrections/acceptance-report.md`.
+El recorrido inicial pasó con 15 reservas nuevas (942–956), todas liquidadas, coste **USD 0.00033950**. La extensión de cobertura pasó dos veces: 957–976 costó **USD 0.00049228** y 977–996 costó **USD 0.00049400**; cada ejecución liquidó 20/20 reservas y no retuvo ninguna. La última verificó una inferencia real `inferred`, dos premisas, citas tanto del TXT como de la nota; la consulta de inyección recuperó los tres fragmentos, produjo una respuesta validada (1 afirmación/1 cita), sin marcador, patrón de credenciales ni cambio de membresías. El miembro no autorizado recibió 404 y la fuente de otro espacio 400, ambos antes de reservar uso (delta 0). Coste de la extensión: **USD 0.00098628**; coste real conocido acumulado en las reservas 941, 942–956 y 957–996: **USD 0.00132618**.
+
+Después de la última ejecución, `committedUSD` diario es **USD 0.00140706** bajo el límite persistido **USD 1.00000000**; incluye reservas retenidas anteriores. Las reservas 941 y 942–956 se preservaron. Las 20 reservas nuevas 977–996 quedaron liquidadas. El servicio sigue con `P00_ALLOW_PROVIDER_CALLS=NO`; no se expuso ni registró la clave. Evidencia y salidas exactas: `/tmp/opencode/phase03-corrections/closure-report.md` y `/tmp/opencode/phase03-corrections/acceptance-report.md`.
+
+### Mapa de evidencia P03.1–P03.9
+
+- **P03.1:** aceptación real: TXT/nota indexados, respuesta multifuente, IDs/revisiones/ubicaciones citados y uso liquidado.
+- **P03.2:** aceptación real: selección explícita, abstención por fuente/tema ausente y selección vacía rechazada.
+- **P03.3:** prueba no facturable `phase03-inference-validation.bxs` exige inferencia con dos premisas y citas, y rechaza premisas ausentes/cita externa; aceptación real exige además inferencia del proveedor con dos premisas/citas TXT+nota.
+- **P03.4:** aceptación real: pregunta ES sobre nota EN, pregunta EN sobre TXT ES y seguimiento; `knowledge-p03.bxs` conserva límites de espacio.
+- **P03.5:** pruebas previas `conversation-p03.bxs`, `phase03-browser-fixture.bxs` y `phase03-frontend.mjs`: compartir, lectura sin continuación y permisos UI.
+- **P03.6:** aceptación real: reemplazo y borrado con citas históricas; `pipeline-p03.bxs` conserva vallas/reintentos deterministas.
+- **P03.7:** `conversation-p03.bxs` conserva las comprobaciones de membresía/IDs; aceptación real niega al no miembro y el ID de documento en otro espacio antes de reservar proveedor.
+- **P03.8:** aceptación real: una nota sintética adversarial indexada y recuperada junto a fuentes legítimas; respuesta real sin marcador, valor de credencial, cita falsa ni cambio de membresía; `knowledge-p03.bxs` mantiene la regresión determinista de cita inválida.
+- **P03.9:** `knowledge-core-cli.bxs` conserva invocación del núcleo sin Next.js; aceptación real ejecuta el worker y `ConversationService` sobre los datos sintéticos indexados.
 
 Este resultado acredita el recorrido automatizado probado, no todos los requisitos de fase ni despliegue remoto. La fase permanece **En curso** hasta revisión integral del controlador; no se afirma restauración del límite persistido a USD 20.

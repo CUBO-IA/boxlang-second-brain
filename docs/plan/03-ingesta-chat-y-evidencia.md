@@ -21,7 +21,7 @@ Completar el primer recorrido con datos reales: cargar dos TXT o notas, indexarl
 
 - [x] **03.1 — Notas y extracción.** Crear/editar notas y extraer TXT conservando líneas o identificadores de fragmentos normalizados. Definir tratamiento de encoding y saltos de línea para que extracción y visor coincidan. *(Role B núcleo + dobles; ver [evidence/role-b-phase02-progress.md](evidence/role-b-phase02-progress.md).)*
 - [x] **03.2 — Fragmentos.** Particionar según decisión de fase 00, conservar ubicación de origen aunque cruce límites y asociar cada fragmento a espacio, documento y revisión interna. Una ubicación se calcula a partir del contenido, nunca se pide al modelo. *(Role B)*
-- [x] **03.3 — Indexación.** Generar embeddings (vía caller con presupuesto) y publicar solo resultados completos; reemplazo/eliminación de fragmentos. *(Pruebas deterministas y aceptación real de TXT/notas y reemplazo; revisión integral pendiente.)*
+- [x] **03.3 — Indexación.** Generar embeddings (vía caller con presupuesto) y publicar solo resultados completos; reemplazo/eliminación de fragmentos. *(Aceptación real exige inferencia con premisas y citas TXT+nota; prueba no facturable valida premisas/citas; revisión integral pendiente.)*
 - [x] **03.4 — Recuperación.** Autorizar espacio y documentos seleccionados antes de buscar; no ampliar selección vacía/ajena. *(Role B SQL)*
 - [x] **03.5 — Respuesta.** Afirmaciones ligadas a fragmentos recuperados; IDs/ubicaciones validados; abstención si no es verificable. *(Role B + dobles)*
 - [x] **03.6 — Clasificación.** Etiquetas supported/inferred/uncertain; inferencias con premisas; abstención sin evidencia. *(Role B)*
