@@ -97,10 +97,9 @@ class {
 		}
 		variables.chatCalls++;
 		variables.lastChatPrompt = arguments.prompt;
-		var content = "DOUBLE_ANSWER";
-		if ( variables.forceInsufficient || findNoCase("INSUFFICIENT_EVIDENCE", arguments.prompt) || findNoCase("abstain", arguments.prompt) ) {
-			content = "INSUFFICIENT_EVIDENCE";
-		}
+		// Do not scan the full prompt: KnowledgeCore's real-AI instruction
+		// mentions the abstain token, which must not trigger the double.
+		var content = variables.forceInsufficient ? "INSUFFICIENT_EVIDENCE" : "DOUBLE_ANSWER";
 		return {
 			model: arguments.model,
 			choices: [ {
