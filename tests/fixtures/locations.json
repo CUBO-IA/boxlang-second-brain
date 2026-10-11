@@ -1,0 +1,6 @@
+[
+  {"kind":"line","start":{"line":2},"end":{"line":2},"quote":"repeat: exact target"},
+  {"kind":"json","start":{"path":"policy.maxDays"},"end":{"path":"policy.maxDays"},"quote":"10"},
+  {"kind":"csv","start":{"row":3,"column":"limit"},"end":{"row":3,"column":"limit"},"quote":"repeat: exact target"},
+  {"kind":"json","start":{"path":"policy.maxDays"},"end":{"path":"policy.maxDays"},"quote":"10"}
+]

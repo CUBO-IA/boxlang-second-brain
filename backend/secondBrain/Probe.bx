@@ -1,0 +1,23 @@
+/** Deterministic pgvector isolation and document lifecycle checks. */
+class Probe {
+	function vectorLifecycle() {
+		var table = "p00_" & lCase( replace( createUUID(), "-", "", "all" ) );
+		var quoted = '"#table#"';
+		queryExecute( "CREATE TEMP TABLE #quoted# (space_id text NOT NULL, document_id text NOT NULL, content text NOT NULL, embedding vector(3) NOT NULL, metadata jsonb NOT NULL, PRIMARY KEY(space_id, document_id))" );
+		try {
+			queryExecute( "INSERT INTO #quoted# VALUES ('A','doc-a','same phrase', '[1,0,0]', '{\"revision\":1}'), ('A','doc-sibling','same phrase', '[0,1,0]', '{}'), ('B','doc-b','same phrase', '[1,0,0]', '{}')" );
+			var retrieved = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id = :space AND document_id = ANY(:docs) ORDER BY embedding <-> '[1,0,0]'::vector", { space={value="A",sqltype="varchar"}, docs={value=["doc-a"],sqltype="varchar",list=true} } );
+			if ( retrieved.recordCount != 1 || retrieved.document_id[1] != "doc-a" ) throw( message="Space/document filter failed before retrieval" );
+			queryExecute( "UPDATE #quoted# SET content='replacement', metadata='{\"revision\":2}' WHERE space_id='A' AND document_id='doc-a'" );
+			var replaced = queryExecute( "SELECT content, metadata->>'revision' AS revision FROM #quoted# WHERE space_id='A' AND document_id='doc-a'" );
+			if ( replaced.content[1] != "replacement" || replaced.revision[1] != "2" ) throw( message="Replacement metadata check failed" );
+			queryExecute( "DELETE FROM #quoted# WHERE space_id='A' AND document_id='doc-a'" );
+			var old = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id='A' AND content='same phrase' AND document_id='doc-a'" );
+			var siblings = queryExecute( "SELECT document_id FROM #quoted# WHERE space_id='A' AND document_id='doc-sibling'" );
+			if ( old.recordCount || siblings.recordCount != 1 ) throw( message="Delete affected stale data or sibling" );
+			return "OK: pre-retrieval space/document filters; replacement metadata; deletion; sibling preserved";
+		} finally {
+			queryExecute( "DROP TABLE IF EXISTS #quoted#" );
+		}
+	}
+}

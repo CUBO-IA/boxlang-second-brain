@@ -1,0 +1,10 @@
+// Explicitly opt-in. No implicit retries. Caller must set a hard USD ceiling
+// no greater than 1 and both explicit credentials; never print credentials.
+if ( !structKeyExists( server.system.environment, "P00_ALLOW_PROVIDER_CALLS" ) || server.system.environment.P00_ALLOW_PROVIDER_CALLS != "YES" ) {
+	throw( message="Blocked: set P00_ALLOW_PROVIDER_CALLS=YES to opt in" );
+}
+if ( !structKeyExists( server.system.environment, "P00_MAX_USD" ) || val( server.system.environment.P00_MAX_USD ) <= 0 || val( server.system.environment.P00_MAX_USD ) > 1 ) {
+	throw( message="Blocked: P00_MAX_USD must be > 0 and <= 1 before calls" );
+}
+if ( !structKeyExists( server.system.environment, "OPENAI_API_KEY" ) || !len( server.system.environment.OPENAI_API_KEY ) ) throw( message="Blocked: OPENAI_API_KEY absent; no provider request made" );
+throw( message="Not implemented: bx-ai 3.5.0 call contract must be confirmed before any real request" );

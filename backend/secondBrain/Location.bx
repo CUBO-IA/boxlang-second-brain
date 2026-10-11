@@ -1,0 +1,19 @@
+/** Exact source coordinates required for verifiable citations. */
+class Location {
+	property name="kind" type="string";
+	property name="start" type="struct";
+	property name="end" type="struct";
+	property name="quote" type="string";
+
+	function init( required struct value ) {
+		if ( !structKeyExists( arguments.value, "kind" ) || !structKeyExists( arguments.value, "start" ) || !structKeyExists( arguments.value, "end" ) || !structKeyExists( arguments.value, "quote" ) ) throw( message="Location requires kind, start, end and quote" );
+		if ( !len( arguments.value.quote ) || !structCount( arguments.value.start ) || !structCount( arguments.value.end ) ) throw( message="Location must identify a non-empty source range" );
+		variables.kind = arguments.value.kind;
+		variables.start = arguments.value.start;
+		variables.end = arguments.value.end;
+		variables.quote = arguments.value.quote;
+		return this;
+	}
+
+	function toStruct() { return { kind=variables.kind, start=variables.start, end=variables.end, quote=variables.quote }; }
+}

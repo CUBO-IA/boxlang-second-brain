@@ -1,0 +1,29 @@
+/** Core document contract: transport and persistence independent. */
+class Document {
+	property name="id" type="string";
+	property name="spaceId" type="string";
+	property name="name" type="string";
+	property name="mediaType" type="string";
+	property name="version" type="string";
+	property name="status" type="string";
+	property name="metadata" type="struct";
+
+	function init( required struct value ) {
+		for ( key in [ "id", "spaceId", "name", "mediaType", "version", "status", "metadata" ] ) {
+			if ( !structKeyExists( arguments.value, key ) ) throw( message="Document missing #key#" );
+		}
+		if ( !len( arguments.value.id ) || !len( arguments.value.spaceId ) || !isStruct( arguments.value.metadata ) ) throw( message="Invalid document contract" );
+		variables.id = arguments.value.id;
+		variables.spaceId = arguments.value.spaceId;
+		variables.name = arguments.value.name;
+		variables.mediaType = arguments.value.mediaType;
+		variables.version = arguments.value.version;
+		variables.status = arguments.value.status;
+		variables.metadata = arguments.value.metadata;
+		return this;
+	}
+
+	function toStruct() {
+		return { id=variables.id, spaceId=variables.spaceId, name=variables.name, mediaType=variables.mediaType, version=variables.version, status=variables.status, metadata=variables.metadata };
+	}
+}
