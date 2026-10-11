@@ -6,7 +6,7 @@ Este plan organiza el trabajo por fases; cada una se autoriza por separado. Las 
 
 ## Punto de partida
 
-La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`. La fase 01 añade cuentas, sesiones, espacios, membresías, autorización efectiva y su interfaz; la migración versionada crea las tablas de cuentas. La fase 00 conserva capacidades locales probadas y una revisión local aprobada, pero sigue bloqueada por evidencia externa de proveedor y operación. No hay ingesta ni funcionalidades de biblioteca/chat.
+La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`. La fase 00 (viabilidad y decisiones) y la fase 01 (cuentas/espacios) están **Verificadas**. Aún no hay biblioteca/chat de producto completos (fase 02+).
 
 - **Backend:** BoxLang implementa autenticación, autorización, persistencia, ingesta, tareas, recuperación, respuestas, relaciones y presupuesto. El núcleo de conocimiento permanece reutilizable e independiente de HTTP y Next.js.
 - **Frontend:** Next.js, TypeScript y App Router implementan pantallas, interacción, grafo y visores. Si se necesita una capa de transporte en Next.js, solo delega en BoxLang; no se convierte en un segundo backend de negocio.
@@ -20,7 +20,7 @@ Las dependencias son acumulativas: cerrar una fase antes de avanzar a la siguien
 
 | Fase | Resultado verificable | Estado |
 |---|---|---|
-| [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Capacidades locales revisadas; evidencia externa y condiciones de operación aún requeridas | Bloqueada |
+| [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Decisiones, probes y contratos de viabilidad cerrados; residuos documentados | Verificada |
 | [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Verificada |
 | [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | Pendiente |
 | [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | Pendiente |
