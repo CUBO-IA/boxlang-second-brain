@@ -139,7 +139,7 @@ class {
 			if ( !row.recordCount ) reject(404, "not_found");
 			liveAccess(auth.request, auth.row.space_id);
 			lockMembership(auth.row.space_id, toString(auth.access.userId));
-			if ( row.shared[1] != arguments.shared ) queryExecute("UPDATE conversations SET shared = CAST(? AS BOOLEAN), pending_token = NULL, state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [arguments.shared, arguments.conversationId]);
+			if ( row.shared[1] != arguments.shared ) queryExecute("UPDATE conversations SET shared = CAST(? AS BOOLEAN), pending_token = NULL, pending_expires_at = NULL, state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [arguments.shared, arguments.conversationId]);
 		}
 		return {id: arguments.conversationId, shared: arguments.shared};
 	}
@@ -193,8 +193,22 @@ class {
 		return output;
 	}
 
+	/** Expire only a lease whose database-clock deadline passed while holding the conversation row lock. */
+	private boolean function recoverExpiredTurn(required string conversationId) {
+		if ( !validUuid(arguments.conversationId) ) reject(400, "invalid_id");
+		var recovered = false;
+		transaction {
+			var expired = queryExecute("SELECT pending_token::TEXT AS token FROM conversations WHERE id = CAST(? AS UUID) AND pending_token IS NOT NULL AND pending_expires_at <= clock_timestamp() FOR UPDATE", [arguments.conversationId], {returntype:"array"});
+			if ( expired.len() ) {
+				queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL, state_version = state_version + 1 WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID) AND pending_expires_at <= clock_timestamp()", [arguments.conversationId, expired[1].token]);
+				recovered = true;
+			}
+		}
+		return recovered;
+	}
+
 	private void function release(required string conversationId, required string token) {
-		queryExecute("UPDATE conversations SET pending_token = NULL WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID)", [arguments.conversationId, arguments.token]);
+		queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID)", [arguments.conversationId, arguments.token]);
 	}
 
 	private void function assertCurrent(required string spaceId, required struct revisions) {
@@ -258,13 +272,19 @@ class {
 		var priorQuestions = safeHistory(arguments.conversationId);
 		var token = uuid();
 		var fence = 0;
+		recoverExpiredTurn(arguments.conversationId);
 		transaction {
-			var locked = queryExecute("SELECT author_id::TEXT AS author_id, state_version, pending_token::TEXT AS pending_token FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId], {returntype:"array"});
+			var locked = queryExecute("SELECT author_id::TEXT AS author_id, state_version, pending_token::TEXT AS pending_token, (pending_expires_at <= clock_timestamp()) AS pending_expired FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId], {returntype:"array"});
 			if ( !locked.len() || locked[1].author_id != toString(auth.access.userId) ) reject(404, "not_found");
-			if ( len(locked[1].pending_token ?: "") ) reject(409, "turn_busy");
+			if ( len(locked[1].pending_token ?: "") ) {
+				if ( !(locked[1].pending_expired ?: false) ) reject(409, "turn_busy");
+				queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL, state_version = state_version + 1 WHERE id = CAST(? AS UUID) AND pending_token = CAST(? AS UUID) AND pending_expires_at <= clock_timestamp()", [arguments.conversationId, locked[1].pending_token]);
+				locked[1].state_version++;
+			}
 			liveAccess(auth.request, auth.row.space_id);
 			lockMembership(auth.row.space_id, toString(auth.access.userId));
-			queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID), state_version = state_version + 1 WHERE id = CAST(? AS UUID)", [token, arguments.conversationId]);
+			// OpenAI calls have a 30 s timeout; five minutes leaves room for embed + chat and normal DB scheduling.
+			queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID), pending_expires_at = clock_timestamp() + INTERVAL '5 minutes', state_version = state_version + 1 WHERE id = CAST(? AS UUID)", [token, arguments.conversationId]);
 			fence = locked[1].state_version + 1;
 		}
 		try {
@@ -294,8 +314,8 @@ class {
 			if ( clean.abstained ) assistantPayload.reason = clean.reason ?: "insufficient_evidence";
 			var published = false;
 			transaction {
-				var locked = queryExecute("SELECT author_id::TEXT AS author_id, space_id::TEXT AS space_id, state_version, pending_token::TEXT AS pending_token, next_sequence FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId], {returntype:"array"});
-				if ( !locked.len() || locked[1].author_id != toString(auth.access.userId) || locked[1].state_version != fence || locked[1].pending_token != token ) reject(409, "fence_changed");
+				var locked = queryExecute("SELECT author_id::TEXT AS author_id, space_id::TEXT AS space_id, state_version, pending_token::TEXT AS pending_token, (pending_expires_at > clock_timestamp()) AS pending_live, next_sequence FROM conversations WHERE id = CAST(? AS UUID) FOR UPDATE", [arguments.conversationId], {returntype:"array"});
+				if ( !locked.len() || locked[1].author_id != toString(auth.access.userId) || locked[1].state_version != fence || locked[1].pending_token != token || !(locked[1].pending_live ?: false) ) reject(409, "fence_changed");
 				liveAccess(auth.request, locked[1].space_id);
 				lockMembership(locked[1].space_id, toString(auth.access.userId));
 				assertCurrent(locked[1].space_id, resolved.revisions);
@@ -304,7 +324,7 @@ class {
 				for ( var item in clean.citations ) {
 					queryExecute("INSERT INTO conversation_citations (id, message_id, citation_key, claim_index, document_id, revision_id, fragment_id, source_title, provenance, location, excerpt) VALUES (CAST(? AS UUID), CAST(? AS UUID), ?, CAST(? AS INTEGER), CAST(? AS UUID), CAST(? AS UUID), ?, ?, CAST(? AS JSONB), CAST(? AS JSONB), ?)", [citationIds[item.key], assistantId, item.key, item.claimIndex, item.documentId, item.revisionId, item.fragmentId, item.title, jsonSerialize(item.provenance), jsonSerialize(item.location), item.excerpt]);
 				}
-				queryExecute("UPDATE conversations SET pending_token = NULL, next_sequence = next_sequence + 2, updated_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [arguments.conversationId]);
+				queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL, next_sequence = next_sequence + 2, updated_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [arguments.conversationId]);
 				published = true;
 			}
 			if ( !published ) reject(409, "fence_changed");

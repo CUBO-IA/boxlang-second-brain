@@ -23,6 +23,59 @@ function rejected(required any action, required numeric status) {
 	try { arguments.action(); } catch (any error) { return val(error.errorCode ?: 0) == arguments.status; }
 	return false;
 }
+function verifyLeaseRecoveryRace(required any service, required any provider, required struct request, required string conversationId, required string documentId) {
+	var enteredOld = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+	var enteredNew = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+	var releaseOld = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+	var releaseNew = createObject("java", "java.util.concurrent.CountDownLatch").init(1);
+	var timeUnit = createObject("java", "java.util.concurrent.TimeUnit");
+	var hookCalls = createObject("java", "java.util.concurrent.atomic.AtomicInteger").init(0);
+	var oldResult = createObject("java", "java.util.concurrent.atomic.AtomicReference").init();
+	var newResult = createObject("java", "java.util.concurrent.atomic.AtomicReference").init();
+	var serviceRef = arguments.service;
+	var oldThread = "";
+	var newThread = "";
+	var oldStarted = false;
+	var newStarted = false;
+	var oldJoined = false;
+	var newJoined = false;
+	try {
+		arguments.provider.setChatHook((prompt) => {
+			var call = hookCalls.incrementAndGet();
+			if ( call == 1 ) { enteredOld.countDown(); if ( !releaseOld.await(10, timeUnit.SECONDS) ) throw(message="old provider barrier timed out"); }
+			if ( call == 2 ) { enteredNew.countDown(); if ( !releaseNew.await(10, timeUnit.SECONDS) ) throw(message="new provider barrier timed out"); }
+		});
+		var oldRequest = {method:"POST",body:{question:"orphaned provider turn",scope:{mode:"documents",documentIds:[arguments.documentId]}},sessionToken:arguments.request.sessionToken,origin:arguments.request.origin,csrfToken:arguments.request.csrfToken,conversationId:arguments.conversationId};
+		oldThread = threadNew(() => oldResult.set(serviceRef.handle("sendMessage", oldRequest))); oldStarted = true;
+		verify(enteredOld.await(10, timeUnit.SECONDS), "First request reaches injected provider barrier");
+		var oldLeaseRows = queryExecute("SELECT pending_token::TEXT AS token, pending_expires_at > clock_timestamp() AS live FROM conversations WHERE id = CAST(? AS UUID)", [arguments.conversationId], {returntype:"array"});
+		verify(oldLeaseRows.len() && oldLeaseRows[1].live, "Reservation starts with a live lease");
+		var liveDuplicate = arguments.service.handle("sendMessage", {method:"POST",body:{question:"cannot steal live turn",scope:{mode:"documents",documentIds:[arguments.documentId]}},sessionToken:arguments.request.sessionToken,origin:arguments.request.origin,csrfToken:arguments.request.csrfToken,conversationId:arguments.conversationId});
+		verify(liveDuplicate.status == 409, "An unexpired live turn is not recovered");
+		var stillLiveRows = queryExecute("SELECT pending_token::TEXT AS token, pending_expires_at > clock_timestamp() AS live FROM conversations WHERE id = CAST(? AS UUID)", [arguments.conversationId], {returntype:"array"});
+		verify(stillLiveRows[1].live && stillLiveRows[1].token == oldLeaseRows[1].token, "Busy rejection preserves the valid live token");
+		queryExecute("UPDATE conversations SET pending_expires_at = clock_timestamp() - INTERVAL '1 second' WHERE id = CAST(? AS UUID)", [arguments.conversationId]);
+		var newRequest = {method:"POST",body:{question:"replacement turn",scope:{mode:"documents",documentIds:[arguments.documentId]}},sessionToken:arguments.request.sessionToken,origin:arguments.request.origin,csrfToken:arguments.request.csrfToken,conversationId:arguments.conversationId};
+		newThread = threadNew(() => newResult.set(serviceRef.handle("sendMessage", newRequest))); newStarted = true;
+		verify(enteredNew.await(10, timeUnit.SECONDS), "New owner reaches provider after expired lease recovery");
+		var newLeaseRows = queryExecute("SELECT pending_token::TEXT AS token, pending_expires_at > clock_timestamp() AS live FROM conversations WHERE id = CAST(? AS UUID)", [arguments.conversationId], {returntype:"array"});
+		verify(newLeaseRows.len() && newLeaseRows[1].live && newLeaseRows[1].token != oldLeaseRows[1].token, "Recovered stale owner cannot retain the new live token");
+		releaseOld.countDown(); oldThread.join(); oldJoined = true;
+		verify(oldResult.get().status == 409, "Expired old provider result is rejected by token/state fence");
+		var stillNewLease = queryExecute("SELECT pending_token::TEXT AS token FROM conversations WHERE id = CAST(? AS UUID)", [arguments.conversationId], {returntype:"array"});
+		verify(stillNewLease[1].token == newLeaseRows[1].token, "Old worker release cannot clear the replacement live turn");
+		arguments.service.setShared(arguments.request, arguments.conversationId, true);
+		arguments.service.setShared(arguments.request, arguments.conversationId, false);
+		releaseNew.countDown(); newThread.join(); newJoined = true;
+		verify(newResult.get().status == 409, "Unshare during provider work invalidates final publication");
+		var messageCount = queryExecute("SELECT COUNT(*) AS total FROM conversation_messages WHERE conversation_id = CAST(? AS UUID)", [arguments.conversationId], {returntype:"array"});
+		verify(messageCount[1].total == 0, "Neither fenced provider result is persisted");
+	} finally {
+		releaseOld.countDown(); releaseNew.countDown(); arguments.provider.setChatHook("");
+		if ( oldStarted && !oldJoined ) oldThread.join();
+		if ( newStarted && !newJoined ) newThread.join();
+	}
+}
 
 function run() {
 var accounts = new AccountService();
@@ -81,6 +134,8 @@ try {
 	verify(createdConversation.shared == false && createdConversation.canContinue, "Conversation is private by default");
 	var first = conversations.sendMessage(ownerRequest, createdConversation.id, "Who grants approval?", {mode:"documents", documentIds:[sourceA.documentId]});
 	verify(first.userMessage.sequence == 1 && first.assistantMessage.sequence == 2 && first.assistantMessage.citations.len() == 1, "Author can ask with persisted ordered messages and citation");
+	var leaseRaceConversation = conversations.create(ownerRequest, space); conversationIds.append(leaseRaceConversation.id);
+	verifyLeaseRecoveryRace(conversations, provider, ownerRequest, leaseRaceConversation.id, sourceA.documentId);
 	var citationId = first.assistantMessage.citations[1].id;
 	verify(reFindNoCase("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", citationId) == 1, "Public citation ID is an unguessable persisted UUID");
 	verify(first.assistantMessage.claims[1].citationIds[1] == citationId, "Claim references persisted citation UUID");
@@ -101,10 +156,10 @@ try {
 	verify(conversations.handle("sendMessage", {method:"POST",sessionToken:ownerRequest.sessionToken,origin:ownerRequest.origin,csrfToken:ownerRequest.csrfToken,conversationId:createdConversation.id,body:{question:"bad extra scope",scope:{mode:"space",documentIds:[]}}}).status == 400, "Manipulated scope shape rejected");
 	verify(provider.getEmbedCalls() == beforeInvalid, "Invalid selections rejected before provider calls");
 	var reservationToken = lCase(createUUID());
-	queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", [reservationToken, createdConversation.id]);
+	queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID), pending_expires_at = clock_timestamp() + INTERVAL '5 minutes' WHERE id = CAST(? AS UUID)", [reservationToken, createdConversation.id]);
 	var busyTurn = conversations.handle("sendMessage", {method:"POST",sessionToken:ownerRequest.sessionToken,origin:ownerRequest.origin,csrfToken:ownerRequest.csrfToken,conversationId:createdConversation.id,body:{question:"concurrent turn",scope:{mode:"documents",documentIds:[sourceA.documentId]}}});
 	verify(busyTurn.status == 409 && provider.getEmbedCalls() == beforeInvalid, "Pending turn fence rejects concurrent send before provider calls");
-	queryExecute("UPDATE conversations SET pending_token = NULL WHERE id = CAST(? AS UUID)", [createdConversation.id]);
+	queryExecute("UPDATE conversations SET pending_token = NULL, pending_expires_at = NULL WHERE id = CAST(? AS UUID)", [createdConversation.id]);
 	var invalidCitation = conversations.handle("resolveCitation", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,messageId:first.assistantMessage.id,citationId:"not-a-uuid"});
 	verify(invalidCitation.status == 400, "Invalid citation IDs rejected safely");
 	var invalidMessage = conversations.handle("resolveCitation", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,messageId:createUUID(),citationId:citationId});

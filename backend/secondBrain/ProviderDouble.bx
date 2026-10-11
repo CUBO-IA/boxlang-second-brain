@@ -12,6 +12,7 @@ class {
 	property name="lastEmbedText" type="string" default="";
 	property name="forceInsufficient" type="boolean" default=false;
 	property name="nextChatContent" type="string" default="";
+	property name="chatHook";
 
 	function init() {
 		variables.chatCalls = 0;
@@ -22,6 +23,7 @@ class {
 		variables.lastEmbedText = "";
 		variables.forceInsufficient = false;
 		variables.nextChatContent = "";
+		variables.chatHook = "";
 		return this;
 	}
 
@@ -38,6 +40,7 @@ class {
 	}
 
 	void function setNextChatContent(required string content) { variables.nextChatContent = arguments.content; }
+	void function setChatHook(any hook="") { variables.chatHook = arguments.hook; }
 
 	numeric function getChatCalls() { return variables.chatCalls; }
 	numeric function getEmbedCalls() { return variables.embedCalls; }
@@ -107,6 +110,7 @@ class {
 		}
 		variables.chatCalls++;
 		variables.lastChatPrompt = arguments.prompt;
+		if ( isCustomFunction(variables.chatHook) ) variables.chatHook(arguments.prompt);
 		var marker = "Retrieved fragment IDs: ";
 		var markerAt = find(marker, arguments.prompt);
 		var ids = markerAt ? trim(mid(arguments.prompt, markerAt + len(marker), len(arguments.prompt))) : "";
