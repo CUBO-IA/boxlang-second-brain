@@ -41,6 +41,10 @@ La indexación admite TXT, notas y ahora PDF con texto extraíble (hasta 1.000 p
 
 Las imágenes incluyen el código, la configuración de BoxLang y el SQL de inicialización de pgvector. `compose.yaml` solo monta volúmenes persistentes; los bind mounts del repositorio quedan en `compose.override.yaml` para desarrollo local. El arranque ya no depende de **Preserve repository during deployment** en Coolify. Recarga la configuración y reconstruye las imágenes al desplegar este cambio; no basta con reiniciar los contenedores. El despliegue remoto no se ha probado.
 
+El frontend de producción ejecuta `pnpm build` al construir la imagen y `pnpm start` al arrancar; solo el override local selecciona `pnpm dev`. No habilites HMR en el proxy público para resolver errores de `/_next/hmr`: reconstruye y despliega la imagen de producción.
+
+Si el login devuelve `403 Solicitud no permitida`, comprueba `APP_ORIGIN` como variable de ejecución de BoxLang en Coolify: debe ser el origen HTTPS exacto, sin ruta, barra final ni el puerto interno `3000`. Cambiar el dominio del proxy no actualiza esa variable; redespliega BoxLang después de corregirla. No desactives la validación de Origin/CSRF.
+
 Tras desplegar, ejecuta `docker compose exec boxlang boxlang backend/migrations/migrate.bxs` y `docker compose exec boxlang boxlang tests/smoke.bxs` desde el directorio del proyecto Compose en el servidor. No elimines los volúmenes existentes.
 
 ## API de fase 01

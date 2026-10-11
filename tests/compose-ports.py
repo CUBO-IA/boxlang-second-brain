@@ -65,6 +65,10 @@ for service, (_, default_published, target, custom_published) in PORTS.items():
 
     base_service = base["services"][service]
     assert all(volume["type"] == "volume" for volume in base_service.get("volumes", [])), f"production requires host files for {service}"
+    expected_service = dict(base_service)
+    if service == "frontend":
+        assert base_service["build"]["target"] == "production"
+        expected_service["build"] = {**base_service["build"], "target": "development"}
     for rendered in (development, custom_development):
         dev_service = rendered["services"][service]
         volumes = dev_service.get("volumes", [])
@@ -73,7 +77,7 @@ for service, (_, default_published, target, custom_published) in PORTS.items():
         assert [volume for volume in volumes if volume["type"] == "volume"] == base_service.get("volumes", [])
         for key in set(base_service) | set(dev_service):
             if key not in {"ports", "volumes"}:
-                assert base_service.get(key) == dev_service.get(key), f"{service}.{key} changed in override"
+                assert expected_service.get(key) == dev_service.get(key), f"{service}.{key} changed in override"
 
 assert base["services"]["frontend"]["expose"] == ["3000"]
 assert base["services"]["boxlang"]["expose"] == ["8080"]
@@ -103,3 +107,4 @@ assert all(volume["type"] == "volume" for volume in production_worker["volumes"]
 
 print("PASS: production requires no repository bind mounts or published host ports, including the worker.")
 print("PASS: development keeps read-only source mounts, loopback ports, internal URLs, healthchecks, and persistent volumes.")
+print("PASS: frontend uses the production image target in deployment and the development target only in the local override.")
