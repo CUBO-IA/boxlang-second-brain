@@ -1,8 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 
 import evidence from "./evidence.generated.json";
+import MarkdownFixtureViewer from "./MarkdownFixtureViewer";
+
+const PdfFixtureViewer = dynamic(() => import("./PdfFixtureViewer"), {
+  ssr: false,
+  loading: () => <p role="status">Cargando visor PDF local…</p>,
+});
 
 const documents = evidence.documents;
 const graph: Record<string, string[]> = {
@@ -73,7 +80,9 @@ export default function Feasibility() {
           {documents.map((item) => <option key={item.id} value={item.id}>{item.format}</option>)}
         </select>
         <p className="location-chip">{document.locationLabel} · v{document.version} · {document.sha256.slice(0, 12)}</p>
-        <pre aria-label={`${document.format} con cita resaltada`}><code>{renderedContent(document)}</code></pre>
+        {document.id === "locations.pdf" ? <PdfFixtureViewer />
+          : document.id === "locations.md" ? <MarkdownFixtureViewer />
+            : <pre aria-label={`${document.format} con cita resaltada`}><code>{renderedContent(document)}</code></pre>}
         <p className="citation">Cita exacta: “{document.location.quote}” <span>· {document.format}</span></p>
       </article>
       <article className="graph-panel">

@@ -1,6 +1,6 @@
 # Fase 02 — Biblioteca, tareas y presupuesto
 
-**Estado:** Pendiente. **Dependencia:** [fase 01](01-cuentas-espacios-y-permisos.md) verificada. [Índice](README.md).
+**Estado:** En curso. A (02.1–02.6) y C integrados y comprobados con BoxLang real sin IA; presupuesto B pendiente de integración/verificación. No es cierre de fase. [Informe A](evidence/phase02-platform-security.md), [integración](evidence/phase02-merge.md). **Dependencia:** [fase 01](01-cuentas-espacios-y-permisos.md) verificada. [Índice](README.md).
 
 **Fuente:** [ingesta](../specification/03-ingesta-y-documentos.md), [arquitectura](../specification/06-arquitectura-y-seguridad.md) y [operación](../specification/07-operacion-y-limites.md). **Cobertura:** V03, V05–V08, V16–V18.
 
@@ -10,12 +10,12 @@ Guardar y gestionar documentos de forma privada y consistente, recuperar tareas 
 
 ## Backend BoxLang: tareas concretas
 
-- [ ] **02.1 — Volumen privado.** Añadir almacenamiento persistente escribible fuera de `backend/` y rutas públicas; el código actual está montado en solo lectura. Usar nombres internos controlados, conservar nombre/procedencia como metadatos y autorizar antes de servir el original.
-- [ ] **02.2 — Biblioteca.** Persistir identidad de documento, espacio, tipo/formato, procedencia, ubicación privada, tamaño, estado y revisión interna vigente. Registrar tarea y error recuperable sin exponer rutas internas o secretos al cliente.
-- [ ] **02.3 — Entrada.** Validar tamaño, contenido y tipo permitido. Aplicar 50 MB por archivo, 1.000 documentos por espacio y límites de fase 00; considerar cargas concurrentes y distinguir duplicado de reintento de una operación.
-- [ ] **02.4 — Tareas.** Crear tareas persistidas, reclamar su ejecución según estrategia validada y recuperar trabajo tras reinicio. Autorizar lectura/reintento; un lector no puede provocar reprocesamiento.
-- [ ] **02.5 — Publicación.** Asociar resultados a la revisión esperada. Una tarea solo publica si documento y revisión siguen vigentes. El reemplazo prepara lo nuevo sin destruir lo válido y limpia resultados temporales cuando falla.
-- [ ] **02.6 — Eliminación.** Retirar acceso/participación del documento y limpiar original y derivados con recuperación de fallos parciales. El borrado no se presenta como terminado si quedan residuos pendientes; una tarea atrasada no puede resucitarlo.
+- [x] **02.1 — Volumen privado.** Añadir almacenamiento persistente escribible fuera de `backend/` y rutas públicas; el código actual está montado en solo lectura. Usar nombres internos controlados, conservar nombre/procedencia como metadatos y autorizar antes de servir el original.
+- [x] **02.2 — Biblioteca.** Persistir identidad de documento, espacio, tipo/formato, procedencia, ubicación privada, tamaño, estado y revisión interna vigente. Registrar tarea y error recuperable sin exponer rutas internas o secretos al cliente.
+- [x] **02.3 — Entrada.** Validar tamaño, contenido y tipo permitido. Aplicar 50 MB por archivo, 1.000 documentos por espacio y límites de fase 00; considerar cargas concurrentes y distinguir duplicado de reintento de una operación.
+- [x] **02.4 — Tareas.** Crear tareas persistidas, reclamar su ejecución según estrategia validada y recuperar trabajo tras reinicio. Autorizar lectura/reintento; un lector no puede provocar reprocesamiento.
+- [x] **02.5 — Publicación.** Asociar resultados a la revisión esperada. Una tarea solo publica si documento y revisión siguen vigentes. El reemplazo prepara lo nuevo sin destruir lo válido y limpia resultados temporales cuando falla.
+- [x] **02.6 — Eliminación.** Retirar acceso/participación del documento y limpiar original y derivados con recuperación de fallos parciales. El borrado no se presenta como terminado si quedan residuos pendientes; una tarea atrasada no puede resucitarlo.
 - [ ] **02.7 — Presupuesto.** Registrar operación, modelo, estimación, reserva, uso/coste y resultado. Reservar atómicamente antes de cada llamada; limitar tamaño de llamadas para tener una estimación conservadora. Considerar embeddings, respuestas, conceptos y reintentos que consuman API.
 - [ ] **02.8 — Conciliación.** Liberar/conciliar reservas según el uso confirmado; definir tratamiento conservador si el proveedor pudo consumir pero no devolvió uso. Recuperar reservas huérfanas sin habilitar doble gasto; aplicar el periodo diario/tarifas acordados.
 

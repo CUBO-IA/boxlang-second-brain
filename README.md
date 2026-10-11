@@ -1,6 +1,6 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones y permisos; frontend Next.js con delegación same-origin fija. Fase 01 no llama a servicios de IA y no implementa biblioteca, ingesta ni chats.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y almacenamiento privado/tareas de biblioteca (fase 02). Frontend Next.js con biblioteca y delegación same-origin a BoxLang. Todavía no hay pipeline de ingesta/IA conectado a la biblioteca: guardar originales no los hace disponibles para consultas.
 
 ## Entorno
 
@@ -76,14 +76,38 @@ P00_ALLOW_PROVIDER_CALLS=YES docker compose -p second-brain-phase01 exec -e P00_
 
 El `.env.example` deja `P00_MAX_USD=1` y fecha/fuente/tarifas explícitas. Según el precio **Standard** publicado a **2026-10-11**, el probe actual usa `gpt-6-luna`: USD 0.10/M tokens de entrada y USD 0.50/M de salida; `text-embedding-3-small`: USD 0.02/M de entrada. Referencias: [modelo GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [precios API](https://developers.openai.com/api/docs/pricing) y [modelos de embeddings](https://developers.openai.com/api/docs/guides/embeddings). Las tarifas pueden variar por modalidad y procesamiento regional; vuelve a confirmar fecha, tipo de endpoint y tarifa antes de permitir llamadas.
 
-El probe sintético ejecutado en el worktree validó las respuestas de chat y embedding, uso reportado y 1,536 dimensiones. El roundtrip pgvector falló en la dimensión 92 y queda pendiente diagnosticar; el resultado completo y coste calculado están en [evidencia P00](docs/plan/evidence/provider-phase00.md). No se cambió de modelo. El guard requiere además el opt-in explícito, tarifas/fecha/referencia válidas y un techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
+Los probes sintéticos validaron chat/embedding reales, uso, 1.536 dimensiones y roundtrip pgvector. El parser científico de bx-ai se corrige únicamente durante el build, con guard de versión/fuente. El [cierre técnico](docs/plan/evidence/phase00-closure.md) registra resultados y coste acumulado; el [histórico](docs/plan/evidence/provider-phase00.md) conserva el fallo previo. No se cambió de modelo ni se hicieron llamadas nuevas al integrar. El guard requiere opt-in explícito, tarifas/fecha/referencia válidas y techo en `(0, 1]` USD; no pongas el opt-in permanente en `.env`.
 
 ## MCP y documentación
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Estado de seguimiento: fase 01 **Verificada** con gate aprobado por Sol; fase 00 continúa **Bloqueada** por roundtrip vectorial y evidencia externa pendiente. Ver [plan e informe de fase 01](docs/plan/01-cuentas-espacios-y-permisos.md), [evidencia de proveedor](docs/plan/evidence/provider-phase00.md) y [verificación](docs/plan/verificacion.md).
+Estado: fases **00 y 01 Verificadas** en la carpeta original. El [registro de revisión](docs/plan/evidence/phase00-review.md) documenta el cierre de viabilidad, pruebas vectoriales/visores y revalidación de cuentas/permisos; no acredita las fases posteriores.
+
+Comprobaciones de fase 00 sin llamadas IA:
+
+```bash
+docker compose exec -T boxlang boxlang tests/vector-roundtrip.bxs
+docker compose exec -T boxlang boxlang tests/probe.bxs
+docker compose exec -T frontend node /tests/contracts.mjs
+docker compose run --rm --no-deps -v "$PWD:/repo:ro" -w /repo frontend node tests/viewer-fixtures.mjs
+```
+
+La ruta de desarrollo `http://127.0.0.1:3000/feasibility` abre únicamente fixtures sintéticos fijos; incluye PDF original y Markdown renderizado con citas resaltadas. El subset Office, las licencias y límites están en el cierre técnico; no equivale a ingesta ni a visores privados de documentos de usuarios.
 
 ## Alcance futuro, no implementado
 
-Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias, tareas y presupuesto requieren fases posteriores. El probe de modelos es independiente de esa funcionalidad y no implica integración productiva; acceso de cuenta, respuestas/uso reales y dimensiones/operación siguen pendientes. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+Ingesta multiformato, recuperación con evidencia, contradicciones, separación entre hechos e inferencias y presupuesto requieren trabajo posterior. Los probes no implican RAG productivo ni acreditan facturación. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+
+## Fase 02 — plataforma y seguridad (A)
+
+Migración 2 y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. **Fase En curso:** A+C integrados; falta integrar y validar presupuesto B. No se ejecuta ingesta ni IA. [Evidencia de integración](docs/plan/evidence/phase02-merge.md).
+
+```sh
+docker compose up -d --no-deps --wait boxlang
+docker compose exec -T boxlang boxlang backend/migrations/migrate.bxs
+docker compose exec -T -e P02_RUN=core-check-01 boxlang boxlang tests/phase02-core.bxs
+docker compose exec -T boxlang boxlang backend/library-maintenance.bxs
+```
+
+El [informe A](docs/plan/evidence/phase02-platform-security.md) contiene operaciones/parámetros, límites, contrato para B/C y la secuencia HTTP completa con cuota concurrente, reinicio real y limpieza acotada. Ejecutar las migraciones antes de usar la biblioteca; originales de usuarios nunca se guardan en `backend/` ni se sirven como archivos públicos.

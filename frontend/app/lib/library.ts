@@ -1,4 +1,4 @@
-import { apiRequest } from "./api";
+import { ApiError, apiRequest } from "./api";
 
 // Phase 02 library contract as the web client consumes it. BoxLang owns the
 // behaviour; these shapes are the frontend's side of the agreement with the
@@ -11,7 +11,8 @@ export type LibraryErrorCategory = "permission" | "limit" | "format" | "budget" 
 export type DocumentFailure = { category: LibraryErrorCategory; retryable: boolean };
 
 export type LibraryDocument = {
-  id: number;
+  id: string;
+  attempt: { taskId: string };
   name: string;
   source: DocumentSource;
   format: string;
@@ -29,58 +30,71 @@ export type LibraryLimits = { maxFileBytes: number; maxDocuments: number; maxFil
 export type DocumentListResponse = {
   documents: LibraryDocument[];
   limits: LibraryLimits;
-  budget: { exhausted: boolean };
+  budget?: { exhausted: boolean };
 };
 
 export type UploadResult =
-  | { name: string; accepted: true; document: LibraryDocument }
+  | { name: string; accepted: true; document: { status: DocumentStatus } }
   | { name: string; accepted: false; category: LibraryErrorCategory };
 
 export type UploadResponse = { results: UploadResult[] };
-export type DocumentResponse = { document: LibraryDocument };
-
 const documentsPath = (spaceId: number) => `/api/spaces/${spaceId}/documents`;
 
 export function listDocuments(spaceId: number, signal?: AbortSignal) {
   return apiRequest<DocumentListResponse>(documentsPath(spaceId), { signal });
 }
 
-export function uploadDocuments(spaceId: number, files: File[], csrfToken: string) {
+function uploadBody(files: File[]) {
   const body = new FormData();
-  for (const file of files) body.append("files", file, file.name);
-  return apiRequest<UploadResponse>(documentsPath(spaceId), {
+  body.set("count", String(files.length));
+  files.forEach((file, index) => {
+    body.set(`file${index + 1}`, file, file.name);
+    body.set(`name${index + 1}`, file.name);
+    body.set(`key${index + 1}`, crypto.randomUUID());
+  });
+  return body;
+}
+
+type StoredUploadResponse = { results: { status: number; document?: { status: DocumentStatus }; error?: { category: LibraryErrorCategory } }[] };
+
+export async function uploadDocuments(spaceId: number, files: File[], csrfToken: string): Promise<UploadResponse> {
+  const response = await apiRequest<StoredUploadResponse>(documentsPath(spaceId), {
     method: "POST",
     headers: { "x-csrf-token": csrfToken },
-    body,
+    body: uploadBody(files),
   });
+  return { results: response.results.map((result, index): UploadResult => result.document
+    ? { name: files[index].name, accepted: true, document: result.document }
+    : { name: files[index].name, accepted: false, category: result.error?.category ?? "unknown" }) };
 }
 
-export function replaceDocument(spaceId: number, documentId: number, file: File, csrfToken: string) {
-  const body = new FormData();
-  body.append("file", file, file.name);
-  return apiRequest<DocumentResponse>(`${documentsPath(spaceId)}/${documentId}/content`, {
-    method: "PUT",
+export async function replaceDocument(spaceId: number, documentId: string, file: File, csrfToken: string) {
+  const response = await apiRequest<StoredUploadResponse>(`${documentsPath(spaceId)}/${documentId}/content`, {
+    method: "POST",
     headers: { "x-csrf-token": csrfToken },
-    body,
+    body: uploadBody([file]),
   });
+  const result = response.results[0];
+  if (!result.document) throw new ApiError(result.status, "No se pudo reemplazar el documento.", result.error?.category ?? "unknown");
+  return result.document;
 }
 
-export function retryDocument(spaceId: number, documentId: number, csrfToken: string) {
-  return apiRequest<DocumentResponse>(`${documentsPath(spaceId)}/${documentId}/retry`, {
+export function retryDocument(spaceId: number, taskId: string, csrfToken: string) {
+  return apiRequest(`/api/spaces/${spaceId}/tasks/${taskId}/retry`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
     body: "{}",
   });
 }
 
-export function deleteDocument(spaceId: number, documentId: number, csrfToken: string) {
-  return apiRequest<{ message: string }>(`${documentsPath(spaceId)}/${documentId}`, {
+export function deleteDocument(spaceId: number, documentId: string, csrfToken: string) {
+  return apiRequest<{ status: "deleted" | "deleting" }>(`${documentsPath(spaceId)}/${documentId}`, {
     method: "DELETE",
     headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
     body: "{}",
   });
 }
 
-export function originalDocumentPath(spaceId: number, documentId: number) {
+export function originalDocumentPath(spaceId: number, documentId: string) {
   return `${documentsPath(spaceId)}/${documentId}/original`;
 }

@@ -1,0 +1,10 @@
+class {
+    this.name = "SecondBrain";
+
+    function onApplicationStart() {
+        // Existing volumes are migrated explicitly; do not try to recover an absent schema.
+        var schema = queryExecute("SELECT to_regclass('document_tasks') AS tasks");
+        if ( !isNull(schema.tasks[1]) ) new secondBrain.LibraryService().recover();
+        return true;
+    }
+}
