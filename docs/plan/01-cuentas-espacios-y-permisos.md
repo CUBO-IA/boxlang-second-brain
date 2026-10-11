@@ -1,6 +1,6 @@
 # Fase 01 — Cuentas, espacios y permisos
 
-**Estado:** Verificada y completa para el entorno aislado acreditado. Sol aprobó calidad y gate de fase 01 en su [re-revisión R1](../../.superpowers/sdd/01-cuentas-espacios-y-permisos/sol-rereview-1.md), fechada 2026-10-11. Fase 00 sigue Bloqueada por evidencia externa/técnica pendiente; la autorización excepcional de fase 01 no cambia ese estado. [Índice](README.md).
+**Estado:** Verificada y completa para el entorno aislado acreditado. Sol aprobó calidad y gate de fase 01 en su [re-revisión R1](../../.superpowers/sdd/01-cuentas-espacios-y-permisos/sol-rereview-1.md), fechada 2026-10-11. La fase 00 quedó **Verificada** el 2026-10-11 ([cierre](evidence/phase00-closure.md)). [Índice](README.md).
 
 **Fuente:** [usuarios y espacios](../specification/02-usuarios-y-espacios.md) y [seguridad](../specification/06-arquitectura-y-seguridad.md). **Cobertura:** V01–V03 y V15.
 
