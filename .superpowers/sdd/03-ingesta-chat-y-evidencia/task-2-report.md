@@ -1,10 +1,11 @@
 # Task 2 report — conversations, safe history and knowledge API
 
-**Status:** DONE_WITH_CONCERNS
+**Status:** DONE
 
 ## Commits
 
 - Implementation: `02a2de8ca162fbafdd195fcfd2e3b3df40fbaf7d` — Add safe persistent conversations and knowledge API.
+- Fix round 1: `8572d13bc64ba832666a6011d27c6c0c9e2fa4e1` — Recover expired conversation turns safely.
 - This report is committed separately so the implementation commit ID is included here.
 - No merge or push performed.
 
@@ -73,6 +74,22 @@ Direct HTTP checks also observed 400 for malformed JSON, 401 for unauthenticated
 ## Self-review and concerns
 
 - All provider tests were deterministic and explicitly injected. Live OpenAI behavior remains unverified and is reserved for the separately authorized final evaluation.
-- Tests exercise pending-turn denial and final revision/membership fences across lifecycle operations, but do not orchestrate a true two-thread provider call racing membership removal/replacement.
+- The deterministic suite now barrier-tests two provider turns: expiry recovery, stale-token rejection, preservation of a newer live token, and unshare invalidation before publication.
 - Task 3 still needs to apply the same raw body caps in its proxy. Exact values and operation contract are frozen above.
 - Scope stayed backend-only; no runtime/dependency installation, credentials, merge, or push.
+
+## Fix round 1 — crash-safe turn leases
+
+- Added migration 5 (`005_conversation_turn_lease.sql`) rather than modifying already-applied migration 4. It pairs `pending_token` with `pending_expires_at` and indexes expired reservations.
+- Reservations receive a five-minute database-clock lease. The next author send recovers only an expired lease while holding the conversation row lock and increments `state_version`; unexpired turns remain busy. Final publication requires matching token/version and a still-live lease. Release, success, share, and unshare clear token and expiry together.
+- Added a barrier-controlled, injected `ProviderDouble` chat hook test. It blocks two in-flight provider calls, proves a live token is not recovered, expires/reclaims the old one, proves the stale worker cannot publish or clear the new lease, and unshares during the newer provider call to prove final publication is fenced. The test calls no network provider.
+
+Exact verification:
+
+| Command | Output |
+|---|---|
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T boxlang boxlang backend/migrations/migrate.bxs` | `Migration 1 already applied`<br>`Migration 2 already applied`<br>`Migration 3 already applied`<br>`Migration 4 already applied`<br>`Migration 5 already applied` |
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/conversation-p03.bxs` | `OK: private/shared authorization; live membership; scope isolation; safe question-only history; current/replaced/deleted citations; deterministic injected provider.` |
+| `git diff --check` | Passed; no output. |
+
+`tests/knowledge-http-p03.sh` was not rerun because the HTTP adapter was not changed in this fix round. No paid calls were made.
