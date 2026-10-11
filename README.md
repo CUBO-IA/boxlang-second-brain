@@ -1,10 +1,11 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Base de un módulo reutilizable Pure BoxLang; sin lógica de negocio, API ni interfaz web.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang con frontend Next.js y un único GET de prueba; sin lógica de negocio.
 
 ## Entorno
 
-- BoxLang CLI **1.18.0**, sobre el Java incluido en la imagen oficial.
+- BoxLang MiniServer y CLI **1.18.0**, sobre el Java incluido en la imagen oficial.
+- Next.js **16.4.0** con App Router, TypeScript, Tailwind CSS, ESLint y React **19.3.0**, sobre Node.js **24**; generado con `pnpm create next-app@latest frontend --yes`, con dependencias fijadas en `frontend/package.json` y `frontend/pnpm-lock.yaml`.
 - BoxLang AI (`bx-ai`) **3.5.0** y driver PostgreSQL (`bx-postgresql`) **1.2.0**, instalados al construir la imagen.
 - PostgreSQL **17** con pgvector **0.8.7**, volumen persistente y verificación de disponibilidad.
 - MCP oficial de documentación configurado exclusivamente para este proyecto en `opencode.json`.
@@ -13,18 +14,32 @@ BoxLang AI ofrece integración con PostgreSQL/pgvector para memoria vectorial y 
 
 ## Levantar la base
 
-Requisitos: Docker y Docker Compose. No necesitas Java, BoxLang ni CommandBox instalados en el equipo.
+Requisitos: Docker y Docker Compose. No necesitas Node.js, Java, BoxLang ni CommandBox instalados en el equipo.
 
 ```bash
 cp .env.example .env
 # Edita .env y cambia POSTGRES_PASSWORD.
 docker compose up -d --build --wait
 docker compose exec boxlang boxlang tests/smoke.bxs
+docker compose exec -T frontend node --input-type=module < tests/http.mjs
 ```
 
 La prueba comprueba la carga del módulo, BoxLang AI, la conexión JDBC y una operación vectorial sin escribir datos ni consumir APIs de IA.
 
-El contenedor `boxlang` permanece disponible como entorno CLI; **no ejecuta todavía una aplicación ni expone HTTP**. Para abrir el REPL:
+### Frontend y API de prueba
+
+- Frontend: http://localhost:3000. Muestra la respuesta real de BoxLang y un error si no puede conectar.
+- Backend: `GET http://localhost:8080/api/health.bxm` → `{"status":"ok","backend":"BoxLang"}`.
+- Otros métodos reciben `405 Method Not Allowed` con `Allow: GET`.
+- Next.js consulta `http://boxlang:8080` desde el servidor mediante la red de Compose; no se necesita CORS ni una segunda API en Next.js.
+- Puertos locales configurables con `FRONTEND_PORT` y `BACKEND_PORT` en `.env`.
+- Los cambios en `frontend/app` y `backend` se reflejan sin reconstruir. Si cambias dependencias, reconstruye con `docker compose up -d --build --wait`.
+
+```bash
+curl http://localhost:8080/api/health.bxm
+```
+
+`tests/http.mjs` comprueba el JSON del GET, el rechazo de POST y que la página de Next.js recibió la respuesta del backend. El contenedor `boxlang` también conserva el CLI. Para abrir el REPL:
 
 ```bash
 docker compose exec boxlang boxlang

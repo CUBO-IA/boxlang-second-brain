@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --paper: #eef3f8;
+  --ink: #16324b;
+  --muted: #465e73;
+  --accent: #175b91;
+  --success: #17633c;
+  --error: #a03030;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: system-ui, sans-serif; }
+main { width: min(760px, 100%); margin: 12vh auto; padding: 32px; }
+h1 { font-size: clamp(2rem, 6vw, 3.5rem); letter-spacing: -0.05em; line-height: 1.15; }
+h1 span { color: var(--accent); }
+p { line-height: 1.6; }
+.label { color: var(--muted); font: 0.8rem ui-monospace, monospace; }
+.status { font-size: 1.3rem; font-weight: 650; color: var(--success); }
+.status[data-backend-status="error"] { color: var(--error); }
+section { margin: 32px 0; padding: 20px 24px; background: white; border-left: 4px solid var(--accent); }
+pre { overflow-x: auto; font: 0.95rem/1.6 ui-monospace, monospace; }
+a { color: var(--accent); text-underline-offset: 4px; }
+a:focus-visible { outline: 3px solid var(--accent); outline-offset: 6px; }
+@media (max-width: 480px) { main { margin: 5vh auto; padding: 24px; } }

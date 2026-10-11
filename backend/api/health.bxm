@@ -1,0 +1,10 @@
+<bx:script>
+    bx:content type="application/json; charset=utf-8";
+    if ( cgi.request_method != "GET" ) {
+        bx:header statusCode=405 statusText="Method Not Allowed";
+        bx:header name="Allow" value="GET";
+        writeOutput( jsonSerialize( { "error": "Solo se permite GET." } ) );
+    } else {
+        writeOutput( jsonSerialize( { "status": "ok", "backend": "BoxLang" } ) );
+    }
+</bx:script>

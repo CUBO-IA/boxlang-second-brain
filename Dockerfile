@@ -1,4 +1,4 @@
-FROM ortussolutions/boxlang:cli-1.18.0
+FROM ortussolutions/boxlang:miniserver-1.18.0
 
 # El instalador de esta imagen no resuelve su enlace simbólico a scripts/helpers.
 ENV BOXLANG_INSTALL_HOME=/usr/local/boxlang
@@ -7,4 +7,3 @@ COPY box.json .
 RUN install-bx-module $(jq -r '.dependencies | to_entries[] | "\(.key)@\(.value)"' box.json)
 
 WORKDIR /modules/second-brain
-CMD ["sleep", "infinity"]
