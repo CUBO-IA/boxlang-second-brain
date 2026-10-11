@@ -55,3 +55,23 @@ The `Phase 03 browser task3-browser-01` space contains an indexed note and share
 - Old indexed fragments and historical citation snapshots created before this change have no stored codepoint offsets. The UI fails closed (shows the saved excerpt/location and no guessed highlight). New TXT/note indexing persists offsets; old data is not automatically rebuilt.
 - Browser visual/interaction acceptance is reserved for task 4 and was not claimed here. The deterministic fixture and real proxy contract test are ready for it.
 - No new dependencies, runtime installs, credentials, or paid provider calls. Backend changes are limited to precise chunk coordinates and preventing file uploads from changing note provenance.
+
+## Fix round 1 — authorization cleanup and proxy error envelopes
+
+- Commit: `2d895d2` — Clear unauthorized chat state and normalize proxy errors.
+- `loadOlder` now invokes the shared stale-aware authorization handler for 401/403. `toggleShared` does the same for 401/403; stale or aborted responses still do not run reset callbacks.
+- Note title/body controls are disabled during save. Every Next-generated 404/405/413/415/502 now uses the task-2 `{errorCategory, category, message}` envelope with no-store/nosniff headers.
+- Added `tests/phase03-auth-errors.mjs` for current 401/403 reset dispatch and stale-response suppression. Extended `tests/phase03-frontend.mjs` to assert proxy/local error envelopes against the running app.
+
+Exact verification (scratch Compose; provider calls disabled):
+
+| Command | Output |
+|---|---|
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T frontend sh -lc 'cd /app && pnpm exec tsc --noEmit'` | Passed; no output. |
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T frontend sh -lc 'cd /app && pnpm lint'` | `$ eslint`; passed. |
+| `node tests/phase03-auth-errors.mjs` | `OK: current 401/403 invoke session/membership reset; stale auth failures are discarded; other errors remain available to callers.` |
+| `P03_BROWSER_FIXTURE_RUN=task3-browser-01 node tests/phase03-frontend.mjs` | `OK: real Next → BoxLang proxy operations, cookie-only auth, no-store, strict IDs/methods, uniform local/BoxLang error envelopes, source and citation revision/offset forwarding, shared read-only permission, CSRF/Origin, empty scope, and exact 32,768/1,100,000-byte caps; no provider calls.` |
+| `node --check tests/phase03-frontend.mjs && node --check tests/phase03-auth-errors.mjs` | Passed; no output. |
+| `git diff --check` | Passed; no output. |
+
+The task report is committed separately after this fix commit; no merge or push performed.
