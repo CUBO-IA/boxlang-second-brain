@@ -46,27 +46,27 @@ function run() {
 
 	try {
 		stage = "account-and-space";
-		var registration = accounts.handle("register", request);
+		var registration = accounts.handle("register", local.request);
 		if ( registration.status != 202 ) {
 			println(jsonSerialize({status:"ERROR", stage:"register", httpStatus:registration.status, errorCategory:registration.body.errorCategory ?: "unknown"}));
 			verify(false, "Register synthetic acceptance account");
 		}
-		var login = accounts.handle("login", request);
+		var login = accounts.handle("login", local.request);
 		verify(login.status == 200, "Login synthetic acceptance account");
-		request.sessionToken = listFirst(listLast(listFirst(login.setCookie, ";"), "="), ";");
-		request.csrfToken = login.body.csrfToken;
-		request.body = {name:"P03 real acceptance"};
-		var space = accounts.handle("createSpace", request);
+		local.request.sessionToken = listFirst(listLast(listFirst(login.setCookie, ";"), "="), ";");
+		local.request.csrfToken = login.body.csrfToken;
+		local.request.body = {name:"P03 real acceptance"};
+		var space = accounts.handle("createSpace", local.request);
 		verify(space.status == 201, "Create isolated acceptance space");
 		spaceId = toString(space.body.space.id);
-		request.spaceId = spaceId;
+		local.request.spaceId = spaceId;
 
 		stage = "durable-two-source-ingestion";
 		temp = library.uploadDirectory();
 		var txt = "Para iniciar la solicitud, completa el formulario SR-204 y envíalo al correo de intake legal. Incluye el identificador del expediente.";
 		fileWrite(temp & "/proceso.txt", txt, "UTF-8");
-		var uploaded = library.acceptFile(request, temp & "/proceso.txt", "proceso.txt", "real-txt-#replace(createUUID(), "-", "", "all")#");
-		var note = library.createNote(request, "Approval authority", "The compliance director grants final approval. Applicants must not approve their own requests.", "real-note-#replace(createUUID(), "-", "", "all")#");
+		var uploaded = library.acceptFile(local.request, temp & "/proceso.txt", "proceso.txt", "real-txt-#replace(createUUID(), "-", "", "all")#");
+		var note = library.createNote(local.request, "Approval authority", "The compliance director grants final approval. Applicants must not approve their own requests.", "real-note-#replace(createUUID(), "-", "", "all")#");
 		documentIds.append(uploaded.documentId);
 		documentIds.append(note.documentId);
 		var worker = new LibraryTaskWorker("", library);
@@ -74,16 +74,16 @@ function run() {
 		verify(txtTask.status == "completed", "Real OpenAI TXT pipeline failed");
 		var noteTask = worker.processOne(note.taskId);
 		verify(noteTask.status == "completed", "Real OpenAI note pipeline failed");
-		var txtSource = library.getTextContent(request, uploaded.documentId);
-		var noteSource = library.getTextContent(request, note.documentId);
+		var txtSource = library.getTextContent(local.request, uploaded.documentId);
+		var noteSource = library.getTextContent(local.request, note.documentId);
 		verify(txtSource.revisionId == uploaded.versionId && txtSource.lines.len() == 1 && txtSource.provenance.kind == "upload", "TXT current revision, location and provenance mismatch");
 		verify(noteSource.revisionId == note.versionId && noteSource.kind == "note" && noteSource.provenance.kind == "note", "Note current revision, location and provenance mismatch");
 
 		stage = "real-multisource-chat-and-citations";
 		var conversations = new ConversationService();
-		var conversation = conversations.create(request, spaceId);
+		var conversation = conversations.create(local.request, spaceId);
 		conversationIds.append(conversation.id);
-		var first = conversations.sendMessage(request, conversation.id, "¿Cómo inicio la solicitud y quién concede la aprobación final?", {mode:"documents",documentIds:[uploaded.documentId,note.documentId]});
+		var first = conversations.sendMessage(local.request, conversation.id, "¿Cómo inicio la solicitud y quién concede la aprobación final?", {mode:"documents",documentIds:[uploaded.documentId,note.documentId]});
 		verify(!first.assistantMessage.abstained && first.assistantMessage.claims.len() > 0, "Real multilingual answer abstained or returned no claims");
 		var sourceIds = [];
 		for ( var citation in first.assistantMessage.citations ) {
@@ -100,40 +100,40 @@ function run() {
 		verify(first.userMessage.scope.documentIds.len() == 2, "Persisted user scope did not preserve both selected sources");
 
 		stage = "cross-language-followup";
-		var follow = conversations.sendMessage(request, conversation.id, "And who is allowed to grant that final approval?", {mode:"documents",documentIds:[uploaded.documentId,note.documentId]});
+		var follow = conversations.sendMessage(local.request, conversation.id, "And who is allowed to grant that final approval?", {mode:"documents",documentIds:[uploaded.documentId,note.documentId]});
 		verify(follow.assistantMessage.citations.len() > 0 && follow.userMessage.sequence > first.userMessage.sequence, "English follow-up failed to persist against the current sources");
-		var history = conversations.read(request, conversation.id, 0, 20);
+		var history = conversations.read(local.request, conversation.id, 0, 20);
 		verify(history.messages.len() == 4 && history.messages[3].content == "And who is allowed to grant that final approval?", "Follow-up history is not persisted in order");
 
 		stage = "english-question-over-spanish-source";
-		var crossLanguage = conversations.sendMessage(request, conversation.id, "What form and destination start the request?", {mode:"documents",documentIds:[uploaded.documentId]});
+		var crossLanguage = conversations.sendMessage(local.request, conversation.id, "What form and destination start the request?", {mode:"documents",documentIds:[uploaded.documentId]});
 		verify(!crossLanguage.assistantMessage.abstained && crossLanguage.assistantMessage.citations.len() > 0, "English query over Spanish TXT did not retrieve evidence");
 		for ( var crossCitation in crossLanguage.assistantMessage.citations ) verify(crossCitation.documentId == uploaded.documentId && crossCitation.revisionId == uploaded.versionId, "Cross-language query escaped its explicit source selection");
 
 		stage = "selection-and-abstention";
-		var selectedOnly = conversations.sendMessage(request, conversation.id, "Who grants final approval?", {mode:"documents",documentIds:[uploaded.documentId]});
+		var selectedOnly = conversations.sendMessage(local.request, conversation.id, "Who grants final approval?", {mode:"documents",documentIds:[uploaded.documentId]});
 		verify(selectedOnly.assistantMessage.abstained, "Selected-source question must abstain when approval authority is absent from TXT");
-		var absent = conversations.sendMessage(request, conversation.id, "What is the exact hexadecimal color of the company logo?", {mode:"documents",documentIds:[uploaded.documentId,note.documentId]});
+		var absent = conversations.sendMessage(local.request, conversation.id, "What is the exact hexadecimal color of the company logo?", {mode:"documents",documentIds:[uploaded.documentId,note.documentId]});
 		verify(absent.assistantMessage.abstained, "Absent-evidence question must abstain");
-		verify(conversations.handle("sendMessage", {method:"POST",sessionToken:request.sessionToken,origin:request.origin,csrfToken:request.csrfToken,conversationId:conversation.id,body:{question:"empty",scope:{mode:"documents",documentIds:[]}}}).status == 400, "Empty explicit selection must fail rather than widen");
+		verify(conversations.handle("sendMessage", {method:"POST",sessionToken:local.request.sessionToken,origin:local.request.origin,csrfToken:local.request.csrfToken,conversationId:conversation.id,body:{question:"empty",scope:{mode:"documents",documentIds:[]}}}).status == 400, "Empty explicit selection must fail rather than widen");
 
 		stage = "replacement-and-current-evidence";
 		var initialTxtCitation = first.assistantMessage.citations.filter((item) => item.documentId == uploaded.documentId);
 		var initialNoteCitation = first.assistantMessage.citations.filter((item) => item.documentId == note.documentId);
 		verify(initialTxtCitation.len() && initialNoteCitation.len(), "Could not retain both initial citations for lifecycle checks");
-		var replacement = library.updateNote(request, note.documentId, "Approval authority revised", "The risk committee grants final approval under policy RC-9. Applicants must not approve their own requests.", "real-note-update-#replace(createUUID(), "-", "", "all")#");
+		var replacement = library.updateNote(local.request, note.documentId, "Approval authority revised", "The risk committee grants final approval under policy RC-9. Applicants must not approve their own requests.", "real-note-update-#replace(createUUID(), "-", "", "all")#");
 		verify(worker.processOne(replacement.taskId).status == "completed", "Replacement revision did not complete real indexing");
-		var oldNoteCitation = conversations.resolveCitation(request, conversation.id, first.assistantMessage.id, initialNoteCitation[1].id);
+		var oldNoteCitation = conversations.resolveCitation(local.request, conversation.id, first.assistantMessage.id, initialNoteCitation[1].id);
 		verify(oldNoteCitation.citation.status == "replaced" && !structKeyExists(oldNoteCitation, "source"), "Replaced citation must preserve history without opening new text");
-		var revisedConversation = conversations.create(request, spaceId);
+		var revisedConversation = conversations.create(local.request, spaceId);
 		conversationIds.append(revisedConversation.id);
-		var revisedAnswer = conversations.sendMessage(request, revisedConversation.id, "Who grants final approval under the current policy?", {mode:"documents",documentIds:[note.documentId]});
+		var revisedAnswer = conversations.sendMessage(local.request, revisedConversation.id, "Who grants final approval under the current policy?", {mode:"documents",documentIds:[note.documentId]});
 		verify(!revisedAnswer.assistantMessage.abstained && revisedAnswer.assistantMessage.citations.len() > 0, "Current replacement revision did not answer from its indexed evidence");
 		for ( var revisedCitation in revisedAnswer.assistantMessage.citations ) verify(revisedCitation.documentId == note.documentId && revisedCitation.revisionId == replacement.versionId, "Current answer cited a replaced revision or unselected source");
 
 		stage = "deletion-and-historical-evidence";
-		verify(library.deleteDocument(request, uploaded.documentId).status == "deleted", "Delete synthetic TXT source");
-		var deletedCitation = conversations.resolveCitation(request, conversation.id, first.assistantMessage.id, initialTxtCitation[1].id);
+		verify(library.deleteDocument(local.request, uploaded.documentId).status == "deleted", "Delete synthetic TXT source");
+		var deletedCitation = conversations.resolveCitation(local.request, conversation.id, first.assistantMessage.id, initialTxtCitation[1].id);
 		verify(deletedCitation.citation.status == "deleted" && !structKeyExists(deletedCitation, "source"), "Deleted citation must remain historical and never open source content");
 
 		stage = "ledger-verification";
@@ -148,7 +148,7 @@ function run() {
 	} finally {
 		for ( var id in conversationIds ) queryExecute("DELETE FROM conversations WHERE id = CAST(? AS UUID)", [id]);
 		for ( var id in documentIds ) {
-			try { library.deleteDocument(request, id); } catch (any ignoredDelete) { }
+			try { library.deleteDocument(local.request, id); } catch (any ignoredDelete) { }
 			queryExecute("DELETE FROM knowledge_fragments WHERE document_id = ?", [id]);
 			queryExecute("DELETE FROM knowledge_documents WHERE id = ?", [id]);
 			queryExecute("UPDATE documents SET current_version = NULL, candidate_version = NULL WHERE id = CAST(? AS UUID)", [id]);

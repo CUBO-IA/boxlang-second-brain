@@ -6,7 +6,7 @@ Este plan organiza el trabajo por fases; cada una se autoriza por separado. Las 
 
 ## Punto de partida
 
-Las fases 00, 01 y 02 están verificadas. La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`. La fase 03 conecta TXT/notas, tareas y presupuesto con indexación, recuperación, citas, conversaciones persistentes y UI; sus pruebas deterministas y comprobaciones de navegador pasan. **La fase sigue En curso:** la aceptación con proveedor real falló antes de llegar a embedding/chat y no se ha aprobado. Véase [evidencia fase 03](evidence/phase03-implementation.md). El [registro de revisión](evidence/phase00-review.md) conserva la evidencia anterior; despliegue y rendimiento siguen en fases posteriores.
+Las fases 00, 01 y 02 están verificadas. La base incluye Docker Compose, PostgreSQL/pgvector, BoxLang AI, Next.js y `GET /api/health.bxm`. La fase 03 conecta TXT/notas, tareas y presupuesto con indexación, recuperación, citas, conversaciones persistentes y UI; sus pruebas deterministas y comprobaciones de navegador pasan. **La fase sigue En curso**, pendiente de revisión integral: su recorrido automatizado autorizado con proveedor real pasó. Véase [evidencia fase 03](evidence/phase03-implementation.md). El [registro de revisión](evidence/phase00-review.md) conserva la evidencia anterior; despliegue y rendimiento siguen en fases posteriores.
 
 - **Backend:** BoxLang implementa autenticación, autorización, persistencia, ingesta, tareas, recuperación, respuestas, relaciones y presupuesto. El núcleo de conocimiento permanece reutilizable e independiente de HTTP y Next.js.
 - **Frontend:** Next.js, TypeScript y App Router implementan pantallas, interacción, grafo y visores. Si se necesita una capa de transporte en Next.js, solo delega en BoxLang; no se convierte en un segundo backend de negocio.
@@ -23,7 +23,7 @@ Las dependencias son acumulativas: cerrar una fase antes de avanzar a la siguien
 | [00 — Viabilidad y decisiones](00-viabilidad-y-decisiones.md) | Modelos/vectores y subset de extracción/visores comprobados; decisiones/límites registrados y gate aprobado | Verificada |
 | [01 — Cuentas, espacios y permisos](01-cuentas-espacios-y-permisos.md) | Registro/sesión, membresías y roles efectivos; protección del último administrador | Verificada |
 | [02 — Biblioteca, tareas y presupuesto](02-biblioteca-tareas-y-presupuesto.md) | Originales privados persistentes, ciclo recuperable y reservas de consumo concurrentes | Verificada |
-| [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | En curso |
+| [03 — Ingesta, chat y evidencia](03-ingesta-chat-y-evidencia.md) | TXT/notas → embeddings reales → chat multifuente → cita resaltada; historial y compartir en lectura | En curso (gate real pasado; revisión pendiente) |
 | [04 — Formatos y previsualizadores](04-formatos-y-previsualizadores.md) | PDF, MD, JSON, código, DOCX, CSV y XLSX con consulta, coordenadas y visor funcional | Pendiente |
 | [05 — URL y GitHub públicos](05-url-y-github-publicos.md) | Importación segura, selección de archivos, procedencia y actualización manual consistente | Pendiente |
 | [06 — Contradicciones y evaluación](06-contradicciones-y-evaluacion.md) | Conflictos con evidencia de ambos lados y 20 casos concretos con puertas críticas | Pendiente |

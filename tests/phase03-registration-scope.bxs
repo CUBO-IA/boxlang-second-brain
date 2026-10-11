@@ -1,0 +1,17 @@
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="Use isolated Compose with P02_ISOLATED_DATABASE=YES");
+function verify(required boolean condition, required string message) { if ( !arguments.condition ) throw(message=arguments.message); }
+
+function run() {
+	var accounts = new secondBrain.AccountService();
+	var email = "registration-scope-#replace(createUUID(), "-", "", "all")#@example.invalid";
+	var request = {method:"POST", body:{email:email,password:"synthetic-registration-password"}, origin:getSystemSetting("APP_ORIGIN"), csrfToken:"", sessionToken:"", spaceId:""};
+	try {
+		verify(!structKeyExists(request, "method") && accounts.handle("register", request).status == 500, "Unscoped request resolves the built-in scope, not the local input");
+		verify(accounts.handle("register", local.request).status == 202, "Register with explicit local.request");
+	} finally {
+		queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [lCase(hash(email, "SHA-256"))]);
+		queryExecute("DELETE FROM accounts WHERE email = ?", [email]);
+	}
+}
+
+run();
