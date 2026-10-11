@@ -25,6 +25,12 @@ docker compose -p second-brain-phase01 exec boxlang boxlang tests/smoke.bxs
 
 La migración de cuentas es versionada e idempotente; ejecútala también al actualizar un volumen existente. Servicios locales: frontend `http://127.0.0.1:3002`, BoxLang `http://127.0.0.1:8082`, PostgreSQL `127.0.0.1:55435`. El health endpoint es `GET /api/health.bxm`.
 
+### Indexación y chat locales (opt-in facturable)
+
+El arranque básico no activa IA ni procesa documentos. Para habilitar ambas cosas, configura en el `.env` privado `OPENAI_API_KEY`, `P00_ALLOW_PROVIDER_CALLS=YES`, `COMPOSE_PROFILES=ai` y `BUDGET_DAILY_USD=1`; después ejecuta `docker compose up -d --build --wait`. Esto autoriza el envío del texto y las preguntas a OpenAI y arranca el worker persistente, que procesa pendientes cada cinco segundos. No guardes claves en archivos versionados. Un límite diario ya creado en `budget_days` se conserva: reducir la variable exige reducir también ese límite persistido, sin borrar el ledger.
+
+La indexación admite TXT, notas y ahora PDF con texto extraíble (hasta 1.000 páginas y 1.000.000 de caracteres extraídos). Reutiliza PDFBox, conserva las páginas en las citas y ofrece el texto extraído en el visor autenticado. Los PDF vacíos/escaneados sin OCR y los formatos aún no conectados fallan sin llamadas de embeddings; no se presentan como indexados. La ampliación PDF no cambia el alcance histórico acreditado de la fase 03.
+
 `APP_ORIGIN` debe coincidir exactamente con el origen público del navegador. En producción configura un origen `https://` detrás de TLS; la cookie de sesión recibe `Secure`. HTTP solo se admite para `localhost` o `127.0.0.1`. No publiques estos servicios directamente a Internet.
 
 `APP_ORIGIN` explícito prevalece; si se omite, Compose lo deriva de `FRONTEND_PORT` (por defecto `http://127.0.0.1:3000`). Para `localhost`, HTTPS o un dominio, configura el origen exacto que usa el navegador. Los puertos Compose pueden ajustarse con `FRONTEND_PORT`, `BACKEND_PORT` y `POSTGRES_PORT`.

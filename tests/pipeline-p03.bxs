@@ -66,6 +66,24 @@ try {
 	documentIds.append(second.documentId);
 	documentIds.append(note.documentId);
 	for ( task in [first, second, note] ) verify(worker.processOne(task.taskId).status == "completed", "Durable task publishes real extracted embeddings");
+	pdf = service.acceptFile(input, "/modules/second-brain/tests/fixtures/locations.pdf", "locations.pdf", "pdf-#runId#");
+	documentIds.append(pdf.documentId);
+	verify(worker.processOne(pdf.taskId).status == "completed", "PDF publishes through the same durable embedding pipeline");
+	pdfSource = service.getTextContent(input, pdf.documentId);
+	verify(pdfSource.kind == "pdf" && pdfSource.lines[2].page == 2 && find("prior authorization", pdfSource.content), "PDF source viewer retains normalized text and original page numbers");
+	pdfAnswer = core.ask(input.spaceId, [pdf.documentId], "What authorization do urgent purchases require?");
+	verify(pdfAnswer.ok && !pdfAnswer.abstained && pdfAnswer.citations[1].location.pageStart == 1 && pdfAnswer.citations[1].location.pageEnd == 2, "PDF answer cites retrieved current PDF pages");
+	blankPdf = createObject("java", "org.apache.pdfbox.pdmodel.PDDocument").init();
+	try {
+		blankPdf.addPage(createObject("java", "org.apache.pdfbox.pdmodel.PDPage").init());
+		blankPdf.save(temp & "/blank.pdf");
+	} finally { blankPdf.close(); }
+	blank = service.acceptFile(input, temp & "/blank.pdf", "blank.pdf", "blank-#runId#");
+	documentIds.append(blank.documentId);
+	embedsBeforeBlank = provider.getEmbedCalls();
+	blankResult = worker.processOne(blank.taskId);
+	verify(blankResult.category == "unsupported_format" && provider.getEmbedCalls() == embedsBeforeBlank, "Image-only/blank PDF never sends empty text to the provider");
+	verify(!service.listDocuments(input).filter((row) => row.id == blank.documentId)[1].failure.retryable, "Unsupported PDF does not offer a futile retry");
 	fileWrite(temp & "/later.md", "Unsupported later-phase format.", "UTF-8");
 	laterFormat = service.acceptFile(input, temp & "/later.md", "later.md", "later-#runId#");
 	documentIds.append(laterFormat.documentId);
@@ -160,7 +178,7 @@ try {
 	defaultRejected = false;
 	try { new KnowledgeCore(); } catch (any noProvider) { defaultRejected = findNoCase("P00_ALLOW_PROVIDER_CALLS=YES", noProvider.message) > 0; }
 	verify(defaultRejected, "Production core never silently defaults to ProviderDouble");
-	println("OK: durable notes/TXT pipeline; normalized UTF-8; partial/retry staging; lease/candidate/delete fences; structured validation; provider default");
+	println("OK: durable PDF/notes/TXT pipeline; PDF page citations/viewer and empty-PDF rejection; normalized UTF-8; partial/retry staging; lease/candidate/delete fences; structured validation; provider default");
 } finally {
 	for ( documentId in documentIds ) {
 		try { service.deleteDocument(input, documentId); } catch (any ignoredCleanup) { }

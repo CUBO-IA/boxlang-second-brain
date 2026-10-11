@@ -15,13 +15,14 @@ class {
 		return {claimed: true, taskId: arguments.task.id, status: "failed", category: arguments.category};
 	}
 
-	private string function readStrict(required struct task) {
+	private struct function extractTask(required struct task, required any heartbeat) {
 		var decoder = StandardCharsets.UTF_8.newDecoder();
 		var bytes = Files.readAllBytes(createObject("java", "java.io.File").init(arguments.task.original).toPath());
-		var text = decoder.decode(createObject("java", "java.nio.ByteBuffer").wrap(bytes)).toString();
 		var digest = lCase(binaryEncode(MessageDigest.getInstance("SHA-256").digest(bytes), "hex"));
 		if ( digest != arguments.task.sha256 ) throw(type="SecondBrain.Storage", message="Original hash mismatch");
-		return text;
+		if ( arguments.task.mediaType == "application/pdf" ) return new secondBrain.EvidenceExtractor().extractPdf(arguments.task.original, arguments.task.documentId, arguments.task.versionId, toString(arguments.task.spaceId), arguments.heartbeat);
+		var text = decoder.decode(createObject("java", "java.nio.ByteBuffer").wrap(bytes)).toString();
+		return new secondBrain.TextNoteExtractor().extract(text, arguments.task.documentId, arguments.task.versionId, toString(arguments.task.spaceId), arguments.task.mediaType == "text/note" ? "note" : "txt", arguments.heartbeat);
 	}
 
 	struct function processOne(string taskId="") {
@@ -30,13 +31,10 @@ class {
 		if ( structIsEmpty(task) ) return {claimed: false, status: "idle"};
 		var heartbeat = () => variables.library.heartbeat(task.id, task.leaseToken);
 		if ( !heartbeat() ) return {claimed: true, taskId: task.id, status: "stale"};
-		var kind = task.provenance.kind ?: "upload";
-		if ( task.mediaType != "text/note" && (task.mediaType != "text/plain" || lCase(listLast(task.name, ".")) != "txt") ) return failed(task, "unsupported_format", false);
-		var raw;
-		try { raw = readStrict(task); }
-		catch (any storageFailure) { return failed(task, "storage", false); }
+		if ( !listFind("text/note,application/pdf", task.mediaType) && (task.mediaType != "text/plain" || lCase(listLast(task.name, ".")) != "txt") ) return failed(task, "unsupported_format", false);
 		try {
-			var staged = variables.core.stageText(toString(task.spaceId), task.documentId, task.versionId, task.name, raw, task.mediaType, kind == "note" ? "note" : "txt", heartbeat);
+			var extracted = extractTask(task, heartbeat);
+			var staged = variables.core.stageExtracted(extracted, task.name, task.mediaType, heartbeat);
 			if ( !staged.ok ) {
 				var category = staged.denied ? (staged.reason == "input_limit" ? "limits" : "budget") : (staged.reason == "input_limit" ? "limits" : "provider");
 				return failed(task, category, true);
@@ -46,8 +44,9 @@ class {
 			return {claimed: true, taskId: task.id, documentId: task.documentId, revisionId: task.versionId, status: published ? "completed" : "stale", fragmentCount: staged.fragmentCount};
 		} catch (any failure) {
 			if ( failure.type == "SecondBrain.LeaseLost" ) return {claimed: true, taskId: task.id, status: "stale"};
+			if ( failure.type == "SecondBrain.Library" && failure.message == "unsupported_format" ) return failed(task, "unsupported_format", false);
 			var category = failure.type == "SecondBrain.Storage" ? "storage" : (findNoCase("fragment", failure.message ?: "") ? "limits" : "extraction");
-			return failed(task, category, category != "storage");
+			return failed(task, category, false);
 		}
 	}
 

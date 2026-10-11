@@ -2,5 +2,11 @@
 env = server.system.environment;
 taskId = trim(env.P03_TASK_ID ?: "");
 maxTasks = len(trim(env.P03_MAX_TASKS ?: "")) ? toNumeric(env.P03_MAX_TASKS) : 10;
-result = new secondBrain.LibraryTaskWorker().run(maxTasks, taskId);
-println(jsonSerialize(result));
+continuous = (env.P03_WORKER_CONTINUOUS ?: "NO") == "YES";
+worker = new secondBrain.LibraryTaskWorker();
+while ( true ) {
+	result = worker.run(maxTasks, taskId);
+	if ( result.processed || !continuous ) println(jsonSerialize(result));
+	if ( !continuous ) break;
+	sleep(5000);
+}

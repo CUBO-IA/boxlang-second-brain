@@ -35,17 +35,44 @@ class {
 		return xmlParse(XML=xmlText,validator={secureProcessing=true,disallowDoctypeDeclaration=true,allowExternalEntities=false,lenientProcessing=false});
 	}
 
-	array function pdfPages(required string path) {
+	array function pdfPages(required string path, any heartbeat="") {
 		checkFile(arguments.path);
 		var pdf=createObject("java","org.apache.pdfbox.Loader").loadPDF(createObject("java","java.io.File").init(arguments.path));
 		var pages=[];
 		try {
+			if(pdf.getNumberOfPages()>1000) throw(message="PDF exceeds 1000 pages");
+			if(!pdf.getCurrentAccessPermission().canExtractContent()) throw(message="PDF does not permit text extraction");
 			var stripper=createObject("java","org.apache.pdfbox.text.PDFTextStripper").init();
+			var total=0;
 			for(var page=1;page<=pdf.getNumberOfPages();page++) {
-				stripper.setStartPage(page); stripper.setEndPage(page); pages.append(trim(stripper.getText(pdf)));
+				if(isCustomFunction(arguments.heartbeat) && !arguments.heartbeat()) throw(type="SecondBrain.LeaseLost",message="Task lease lost");
+				stripper.setStartPage(page); stripper.setEndPage(page);
+				var text=trim(stripper.getText(pdf));
+				total+=len(text);
+				if(total>1000000) throw(message="PDF extracted text exceeds 1000000 characters");
+				pages.append(text);
 			}
 		} finally { pdf.close(); }
 		return pages;
+	}
+
+	/** Same normalized text and page map for indexing and the authenticated source viewer. */
+	struct function extractPdf(required string path, required string documentId, required string revisionId, required string spaceId, any heartbeat="") {
+		var extractor=new secondBrain.TextNoteExtractor();
+		var pages=pdfPages(arguments.path,arguments.heartbeat);
+		var normalized=[];
+		var linePages=[];
+		for(var page=1;page<=pages.len();page++) {
+			var text=extractor.normalizeText(pages[page]).text;
+			normalized.append(text);
+			for(var line in extractor.lines(text,arguments.heartbeat)) linePages.append(page);
+		}
+		var raw=normalized.toList(char(10));
+		// ponytail: text PDFs only; add OCR when scanned documents are required.
+		if(!len(trim(raw))) throw(type="SecondBrain.Library",message="unsupported_format",errorCode="415");
+		var extracted=extractor.extract(raw,arguments.documentId,arguments.revisionId,arguments.spaceId,"pdf",arguments.heartbeat);
+		for(var i=1;i<=extracted.lines.len();i++) extracted.lines[i].page=linePages[i];
+		return extracted;
 	}
 
 	array function docxParagraphs(required string path) {

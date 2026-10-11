@@ -49,6 +49,9 @@ function focusLine(source: NonNullable<Resolved["source"]>, citation: Citation) 
 }
 
 function citationLocation(citation: Citation, language: Language) {
+  const pageStart = citation.location.pageStart;
+  const pageEnd = citation.location.pageEnd;
+  if (pageStart && pageEnd) return language === "es" ? `Páginas ${pageStart}–${pageEnd}` : `Pages ${pageStart}–${pageEnd}`;
   const start = citation.location.lineStart;
   const end = citation.location.lineEnd;
   if (start && end) return language === "es" ? `Líneas ${start}–${end}` : `Lines ${start}–${end}`;

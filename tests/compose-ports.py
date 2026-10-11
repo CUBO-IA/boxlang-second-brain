@@ -76,5 +76,16 @@ assert base["services"]["postgres"]["healthcheck"]
 assert any(volume.get("source") == "originals_data" for volume in base["services"]["boxlang"]["volumes"])
 assert any(volume.get("source") == "postgres_data" for volume in base["services"]["postgres"]["volumes"])
 
+with_worker = compose_config(False, "--profile", "ai")
+worker = with_worker["services"]["worker"]
+assert worker["profiles"] == ["ai"]
+assert worker["command"] == ["boxlang", "backend/library-worker.bxs"]
+assert worker["restart"] == "unless-stopped"
+assert worker["healthcheck"]["disable"] is True
+assert "ports" not in worker
+assert worker["volumes"] == with_worker["services"]["boxlang"]["volumes"]
+assert worker["environment"]["P00_ALLOW_PROVIDER_CALLS"] == "NO"
+assert worker["environment"]["P03_WORKER_CONTINUOUS"] == "YES"
+
 print("PASS: base compose has no published ports; default override publishes only the three loopback mappings.")
 print("PASS: internal URLs, healthchecks, storage, and other service configuration are unchanged.")

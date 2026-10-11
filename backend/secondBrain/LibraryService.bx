@@ -172,7 +172,7 @@ class {
 
 	private struct function documentValue(required struct row) {
 		var category = isNull(row.error_category) ? "" : row.error_category;
-		var failure = len(category) ? {category: webCategory(category), retryable: row.state == "failed" && row.storage_state == "ready"} : null;
+		var failure = len(category) ? {category: webCategory(category), retryable: row.state == "failed" && row.storage_state == "ready" && !listFind("unsupported_format,storage,extraction,limits", category)} : null;
 		var replacement = len(toString(row.current_version)) && row.current_version != row.candidate_version;
 		var provenance = jsonDeserialize(row.provenance);
 		var isNote = (provenance.kind ?: "upload") == "note";
@@ -201,10 +201,14 @@ class {
 	struct function getTextContent(required struct request, required string documentId) {
 		access(arguments.request);
 		if ( !validId(arguments.documentId) ) reject(400, "invalid_input");
-		var found = queryExecute("SELECT v.id, v.name, v.media_type, v.provenance::TEXT FROM documents d JOIN document_versions v ON v.id = d.current_version AND v.document_id = d.id WHERE d.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND v.storage_state = 'ready' AND v.media_type IN ('text/plain', 'text/note')", [arguments.documentId, toString(arguments.request.spaceId)]);
+		var found = queryExecute("SELECT v.id, v.name, v.media_type, v.provenance::TEXT FROM documents d JOIN document_versions v ON v.id = d.current_version AND v.document_id = d.id WHERE d.id = CAST(? AS UUID) AND d.space_id = CAST(? AS BIGINT) AND d.deleted_at IS NULL AND v.storage_state = 'ready' AND v.media_type IN ('text/plain', 'text/note', 'application/pdf')", [arguments.documentId, toString(arguments.request.spaceId)]);
 		if ( found.recordCount != 1 ) reject(404, "not_found");
 		var file = original(found.id[1]);
 		if ( !fileExists(file) ) reject(503, "storage");
+		if ( found.media_type[1] == "application/pdf" ) {
+			var pdf = new secondBrain.EvidenceExtractor().extractPdf(file, arguments.documentId, found.id[1], toString(arguments.request.spaceId));
+			return {documentId: arguments.documentId, revisionId: found.id[1], title: found.name[1], kind: "pdf", content: pdf.text, lines: pdf.lines, lineCount: pdf.lineCount, provenance: jsonDeserialize(found.provenance[1])};
+		}
 		var decoder = createObject("java", "java.nio.charset.StandardCharsets").UTF_8.newDecoder();
 		var text;
 		try { text = decoder.decode(createObject("java", "java.nio.ByteBuffer").wrap(fileReadBinary(file))).toString(); }

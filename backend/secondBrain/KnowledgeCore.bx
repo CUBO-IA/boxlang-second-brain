@@ -48,23 +48,29 @@ class {
 	) {
 		if ( isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
 		var extracted = variables.extractor.extract(arguments.text, arguments.documentId, arguments.revisionId, arguments.spaceId, arguments.kind, arguments.heartbeat);
-		var fragments = variables.chunker.chunkExtracted(extracted, arguments.heartbeat);
-		variables.index.upsertDocument(arguments.documentId, arguments.spaceId, arguments.revisionId, arguments.name, arguments.mediaType);
+		return stageExtracted(extracted, arguments.name, arguments.mediaType, arguments.heartbeat);
+	}
+
+	struct function stageExtracted(required struct extracted, required string name, required string mediaType, any heartbeat="") {
+		var documentId = arguments.extracted.documentId;
+		var revisionId = arguments.extracted.revisionId;
+		var fragments = variables.chunker.chunkExtracted(arguments.extracted, arguments.heartbeat);
+		variables.index.upsertDocument(documentId, arguments.extracted.spaceId, revisionId, arguments.name, arguments.mediaType);
 		variables.index.storeFragmentsStaging(fragments, arguments.heartbeat);
-		if ( variables.index.fragmentCount(arguments.documentId, arguments.revisionId) != fragments.len() ) throw(type="SecondBrain.LeaseLost", message="Candidate is no longer current");
+		if ( variables.index.fragmentCount(documentId, revisionId) != fragments.len() ) throw(type="SecondBrain.LeaseLost", message="Candidate is no longer current");
 		var missing = {};
-		for ( var fragmentIndex in variables.index.unembeddedIndexes(arguments.documentId, arguments.revisionId) ) missing[toString(fragmentIndex)] = true;
+		for ( var fragmentIndex in variables.index.unembeddedIndexes(documentId, revisionId) ) missing[toString(fragmentIndex)] = true;
 		var embedded = 0;
 		for ( var fragment in fragments ) {
 			if ( !structKeyExists(missing, toString(fragment.fragmentIndex)) ) continue;
 			if ( isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
 			var embedResult = variables.caller.embed(fragment.text, variables.embedModel);
 			if ( isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
-			if ( !embedResult.ok ) return { ok: false, reason: embedResult.reason ?: "embed_failed", denied: embedResult.denied ?: false, documentId: arguments.documentId, revisionId: arguments.revisionId, embeddedCount: embedded, lineCount: extracted.lineCount };
-			variables.index.attachEmbedding(arguments.documentId, arguments.revisionId, fragment.fragmentIndex, embedResult.vector);
+			if ( !embedResult.ok ) return { ok: false, reason: embedResult.reason ?: "embed_failed", denied: embedResult.denied ?: false, documentId: documentId, revisionId: revisionId, embeddedCount: embedded, lineCount: arguments.extracted.lineCount };
+			variables.index.attachEmbedding(documentId, revisionId, fragment.fragmentIndex, embedResult.vector);
 			embedded++;
 		}
-		return { ok: true, documentId: arguments.documentId, revisionId: arguments.revisionId, fragmentCount: fragments.len(), embeddedCount: embedded, lines: extracted.lineCount };
+		return { ok: true, documentId: documentId, revisionId: revisionId, fragmentCount: fragments.len(), embeddedCount: embedded, lines: arguments.extracted.lineCount };
 	}
 
 	struct function ingestText(required string spaceId, required string documentId, required string revisionId, required string name, required string text, string mediaType="text/plain", string kind="txt") {

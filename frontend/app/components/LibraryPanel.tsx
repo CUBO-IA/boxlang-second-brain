@@ -516,7 +516,7 @@ export function LibraryPanel({
                         <td>
                           <div className="document-actions">
                             <a className="button quiet" href={originalDocumentPath(spaceId, item.id)} download aria-label={t.downloadOriginalFor(item.name)}>{t.downloadOriginal}</a>
-                            {item.status === "available" && (item.source === "note" || item.format === "txt") && <button className="button quiet" type="button" onClick={() => openSource(item)} aria-label={`${t.sourceOpen}: ${item.name}`}>{t.sourceOpen}</button>}
+                            {item.status === "available" && (item.source === "note" || item.format === "txt" || item.format === "pdf") && <button className="button quiet" type="button" onClick={() => openSource(item)} aria-label={`${t.sourceOpen}: ${item.name}`}>{t.sourceOpen}</button>}
                             {canEdit && (
                               <>
                                 {item.source !== "note" && <button className="button quiet" type="button" disabled={busy !== ""} aria-label={t.replaceFor(item.name)} onClick={() => startReplace(item)}>

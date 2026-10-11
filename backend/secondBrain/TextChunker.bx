@@ -74,6 +74,11 @@ class {
 			if ( index > variables.maxFragments ) throw( message="Document exceeds #variables.maxFragments# fragments" );
 			var slice = substringCodePoints(text, offset, variables.maxCodePoints);
 			var location = locationForSlice(lines, offset, min(offset + variables.maxCodePoints, total), arguments.heartbeat);
+			if ( (arguments.extracted.kind ?: "") == "pdf" ) {
+				location.kind = "pdf-pages";
+				location.pageStart = lines[location.lineStart].page;
+				location.pageEnd = lines[location.lineEnd].page;
+			}
 			fragments.append({
 				fragmentIndex: index,
 				text: slice,

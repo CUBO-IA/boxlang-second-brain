@@ -5,7 +5,7 @@ export type Source = {
   documentId: string;
   revisionId: string;
   title: string;
-  kind: "txt" | "note";
+  kind: "txt" | "note" | "pdf";
   content: string;
   lines: SourceLine[];
   lineCount: number;
@@ -15,6 +15,8 @@ export type CitationLocation = {
   kind?: string;
   lineStart?: number;
   lineEnd?: number;
+  pageStart?: number;
+  pageEnd?: number;
   startOffset?: number;
   endOffset?: number;
 };
