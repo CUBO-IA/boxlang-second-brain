@@ -1,0 +1,10 @@
+{
+  "classPaths": ["/modules/second-brain/backend"],
+  "modulesDirectory": ["${boxlang-home}/modules", "/modules"],
+  "xml": {
+    "secureProcessing": false,
+    "disallowDoctypeDeclaration": false,
+    "allowExternalEntities": true,
+    "lenientProcessing": true
+  }
+}

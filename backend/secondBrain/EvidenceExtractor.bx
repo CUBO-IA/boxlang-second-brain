@@ -23,7 +23,16 @@ class {
 		var bytes=stream.readNBytes(variables.maxXmlBytes+1);
 		stream.close();
 		if(bytes.length>variables.maxXmlBytes) throw(message="OOXML part exceeds actual read limit: #arguments.entryName#");
-		return xmlParse(createObject("java","java.lang.String").init(bytes,"UTF-8"),{secureProcessing=true,disallowDoctypeDeclaration=true,allowExternalEntities=false,lenientProcessing=false});
+		var decoder=createObject("java","java.nio.charset.Charset").forName("UTF-8").newDecoder();
+		var codingError=createObject("java","java.nio.charset.CodingErrorAction");
+		decoder.onMalformedInput(codingError.REPORT);
+		decoder.onUnmappableCharacter(codingError.REPORT);
+		var xmlText="";
+		try { xmlText=decoder.decode(createObject("java","java.nio.ByteBuffer").wrap(bytes)).toString(); }
+		catch(any failure) { throw(message="OOXML part is not valid UTF-8: #arguments.entryName#"); }
+		if(left(xmlText,1)==char(65279)) xmlText=mid(xmlText,2,len(xmlText)-1);
+		if(!len(trim(xmlText)) || left(trim(xmlText),1)!="<") throw(message="OOXML part must contain literal XML: #arguments.entryName#");
+		return xmlParse(XML=xmlText,validator={secureProcessing=true,disallowDoctypeDeclaration=true,allowExternalEntities=false,lenientProcessing=false});
 	}
 
 	array function pdfPages(required string path) {
