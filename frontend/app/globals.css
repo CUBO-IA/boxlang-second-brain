@@ -234,7 +234,7 @@ h3 { margin: 0 0 8px; color: var(--ink); font: 600 1.19rem/1.4 var(--font-headin
 .content-subtitle { max-width: 640px; margin: 6px 0 0; color: var(--ink-secondary); }
 .content-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 
-.library { display: grid; gap: 16px; }
+.library { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .library > .notice:empty, .library > .upload-results:empty { display: none; }
 .library > .notice { margin: 0; }
 .budget-banner { margin: 0; }
@@ -344,7 +344,18 @@ h3 { margin: 0 0 8px; color: var(--ink); font: 600 1.19rem/1.4 var(--font-headin
 
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 1fr; }
-  .app-sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+  .app-sidebar { gap: 12px; padding: 16px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebar-section { padding: 12px; }
+  .rail-heading { display: none; }
+  .space-list { display: flex; gap: 8px; margin: 0 0 12px; overflow-x: auto; }
+  .space-option { flex: 0 0 auto; width: auto; min-width: 150px; }
+  .create-space-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding-top: 12px; }
+  .create-space-form label, .create-space-form .notice { grid-column: 1 / -1; }
+  .create-space-form .notice { min-height: 0; }
+  .create-space-form .button { width: auto; }
+  .sidebar-footer { grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 12px; }
+  .sidebar-footer .button { width: auto; }
+  .sidebar-meta { grid-column: 1 / -1; }
   .sidebar-nav { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
   .sidebar-footer { margin-top: 0; }
   .auth-screen { grid-template-columns: 1fr; }
@@ -363,7 +374,6 @@ h3 { margin: 0 0 8px; color: var(--ink); font: 600 1.19rem/1.4 var(--font-headin
   .app-content { padding: 24px 16px; }
   .auth-side { padding: 24px 16px; }
   .auth-card { padding: 21px; }
-  .space-list { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
   .member-card { padding: 18px; }
   .library-toolbar { padding: 12px 16px; }
   .upload-result { grid-template-columns: 16px minmax(0, 1fr); }
