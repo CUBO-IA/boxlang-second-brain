@@ -98,8 +98,19 @@ export const readSource = (spaceId: number, documentId: string, signal?: AbortSi
   apiRequest<{ source: Source }>(`${spacePath(spaceId)}/documents/${documentId}/source`, { signal });
 
 export type NoteWrite = { title: string; body: string; operationKey: string };
+
+// Pasted text often carries invisible control characters (Word soft line
+// breaks, PDF page breaks) that the library rejects as a format mismatch.
+// Keep the line structure they stand for and drop the rest.
+export function cleanNoteText(text: string) {
+  return text.replace(/\r\n?/g, "\n").replace(/[\u000b\u000c]/g, "\n").replace(/[\u0000-\u0008\u000e-\u001f]/g, "");
+}
+
+function cleanNote(note: NoteWrite): NoteWrite {
+  return { ...note, title: note.title.replace(/[\u0000-\u001f\u007f]+/g, " ").trim(), body: cleanNoteText(note.body) };
+}
 export const createNote = (spaceId: number, csrfToken: string, note: NoteWrite, signal?: AbortSignal) =>
-  apiRequest<{ note: { documentId: string; versionId: string; taskId: string; status: string } }>(`${spacePath(spaceId)}/notes`, { ...json("POST", csrfToken, note), signal });
+  apiRequest<{ note: { documentId: string; versionId: string; taskId: string; status: string } }>(`${spacePath(spaceId)}/notes`, { ...json("POST", csrfToken, cleanNote(note)), signal });
 
 export const updateNote = (spaceId: number, documentId: string, csrfToken: string, note: NoteWrite, signal?: AbortSignal) =>
-  apiRequest<{ note: { documentId: string; versionId: string; taskId: string; status: string } }>(`${spacePath(spaceId)}/notes/${documentId}`, { ...json("PUT", csrfToken, note), signal });
+  apiRequest<{ note: { documentId: string; versionId: string; taskId: string; status: string } }>(`${spacePath(spaceId)}/notes/${documentId}`, { ...json("PUT", csrfToken, cleanNote(note)), signal });
