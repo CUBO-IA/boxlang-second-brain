@@ -16,8 +16,8 @@ Guardar y gestionar documentos de forma privada y consistente, recuperar tareas 
 - [ ] **02.4 — Tareas.** Crear tareas persistidas, reclamar su ejecución según estrategia validada y recuperar trabajo tras reinicio. Autorizar lectura/reintento; un lector no puede provocar reprocesamiento.
 - [ ] **02.5 — Publicación.** Asociar resultados a la revisión esperada. Una tarea solo publica si documento y revisión siguen vigentes. El reemplazo prepara lo nuevo sin destruir lo válido y limpia resultados temporales cuando falla.
 - [ ] **02.6 — Eliminación.** Retirar acceso/participación del documento y limpiar original y derivados con recuperación de fallos parciales. El borrado no se presenta como terminado si quedan residuos pendientes; una tarea atrasada no puede resucitarlo.
-- [ ] **02.7 — Presupuesto.** Registrar operación, modelo, estimación, reserva, uso/coste y resultado. Reservar atómicamente antes de cada llamada; limitar tamaño de llamadas para tener una estimación conservadora. Considerar embeddings, respuestas, conceptos y reintentos que consuman API.
-- [ ] **02.8 — Conciliación.** Liberar/conciliar reservas según el uso confirmado; definir tratamiento conservador si el proveedor pudo consumir pero no devolvió uso. Recuperar reservas huérfanas sin habilitar doble gasto; aplicar el periodo diario/tarifas acordados.
+- [x] **02.7 — Presupuesto.** Registrar operación, modelo, estimación, reserva, uso/coste y resultado. Reservar atómicamente antes de cada llamada; limitar tamaño de llamadas para tener una estimación conservadora. Considerar embeddings, respuestas, conceptos y reintentos que consuman API. *(Role B provisional — see [evidence/role-b-phase02-progress.md](evidence/role-b-phase02-progress.md); phase 00 still Bloqueada; phase 02 not closed.)*
+- [x] **02.8 — Conciliación.** Liberar/conciliar reservas según el uso confirmado; definir tratamiento conservador si el proveedor pudo consumir pero no devolvió uso. Recuperar reservas huérfanas sin habilitar doble gasto; aplicar el periodo diario/tarifas acordados. *(Role B provisional with provider doubles; not a phase closure.)*
 
 ## Estados y consistencia que deben cumplirse
 

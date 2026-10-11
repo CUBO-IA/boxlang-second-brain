@@ -1,0 +1,82 @@
+/**
+ * In-process provider double for budget and knowledge-core tests.
+ * Never contacts OpenAI; tracks whether a call was authorized/reached.
+ */
+class {
+	property name="chatCalls" type="numeric" default=0;
+	property name="embedCalls" type="numeric" default=0;
+	property name="failNext" type="string" default="";
+	property name="lastChatPrompt" type="string" default="";
+	property name="lastEmbedText" type="string" default="";
+
+	function init() {
+		variables.chatCalls = 0;
+		variables.embedCalls = 0;
+		variables.failNext = "";
+		variables.lastChatPrompt = "";
+		variables.lastEmbedText = "";
+		return this;
+	}
+
+	void function setFailNext(required string mode) {
+		variables.failNext = arguments.mode;
+	}
+
+	numeric function getChatCalls() { return variables.chatCalls; }
+	numeric function getEmbedCalls() { return variables.embedCalls; }
+
+	private array function deterministicEmbedding(required string text, numeric dimensions=1536) {
+		var vector = [];
+		var seed = 0;
+		var javaString = createObject("java", "java.lang.String").init(arguments.text);
+		for ( var i = 0; i < javaString.length(); i++ ) seed += javaString.codePointAt(i);
+		for ( var d = 1; d <= arguments.dimensions; d++ ) {
+			var value = ((seed + d) % 97) / 1000;
+			vector.append(value);
+		}
+		vector[1] = 0.001;
+		return vector;
+	}
+
+	struct function chat(required string prompt, required string model, numeric maxCompletionTokens=64) {
+		if ( variables.failNext == "timeout" ) {
+			variables.failNext = "";
+			throw( type="ProviderTimeout", message="Simulated provider timeout" );
+		}
+		if ( variables.failNext == "error" ) {
+			variables.failNext = "";
+			throw( message="Simulated provider error" );
+		}
+		variables.chatCalls++;
+		variables.lastChatPrompt = arguments.prompt;
+		var content = "DOUBLE_ANSWER";
+		if ( findNoCase("abstain", arguments.prompt) ) content = "INSUFFICIENT_EVIDENCE";
+		return {
+			model: arguments.model,
+			choices: [ {
+				finish_reason: "stop",
+				message: { role: "assistant", content: content }
+			} ],
+			usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 }
+		};
+	}
+
+	struct function embed(required string text, required string model) {
+		if ( variables.failNext == "timeout" ) {
+			variables.failNext = "";
+			throw( type="ProviderTimeout", message="Simulated provider timeout" );
+		}
+		if ( variables.failNext == "error" ) {
+			variables.failNext = "";
+			throw( message="Simulated provider error" );
+		}
+		variables.embedCalls++;
+		variables.lastEmbedText = arguments.text;
+		var vector = deterministicEmbedding(arguments.text);
+		return {
+			model: arguments.model,
+			data: [ { embedding: vector } ],
+			usage: { prompt_tokens: max(1, ceiling(len(arguments.text) / 4)), total_tokens: max(1, ceiling(len(arguments.text) / 4)) }
+		};
+	}
+}

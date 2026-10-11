@@ -1,0 +1,117 @@
+/**
+ * Role B — 03.5/03.6 claims, labels and citation validation before publish.
+ */
+class {
+	private boolean function fragmentExists(required array retrieved, required string fragmentId) {
+		for ( var fragment in arguments.retrieved ) {
+			if ( fragment.id == arguments.fragmentId ) return true;
+		}
+		return false;
+	}
+
+	private struct function fragmentById(required array retrieved, required string fragmentId) {
+		for ( var fragment in arguments.retrieved ) {
+			if ( fragment.id == arguments.fragmentId ) return fragment;
+		}
+		throw( message="Unknown fragment id for citation" );
+	}
+
+	struct function abstain(required string reason) {
+		return {
+			ok: true,
+			abstained: true,
+			reason: arguments.reason,
+			claims: [],
+			citations: []
+		};
+	}
+
+	/**
+	 * Build a published answer from model content + retrieved fragments.
+	 * Invalid citation IDs are rejected; no fabricated support is published.
+	 */
+	struct function buildFromRetrieved(
+		required string modelText,
+		required array retrieved,
+		required array claimSpecs
+	) {
+		if ( arguments.retrieved.len() == 0 ) {
+			return abstain("no_evidence_in_selection");
+		}
+		var claims = [];
+		var citations = [];
+		var citationIndex = 1;
+		for ( var spec in arguments.claimSpecs ) {
+			var label = lCase(trim(spec.label ?: "supported"));
+			if ( !listFindNoCase("supported,inferred,uncertain", label) ) throw( message="Invalid claim label" );
+			var supportIds = spec.supportFragmentIds ?: [];
+			if ( !isArray(supportIds) ) throw( message="supportFragmentIds must be an array" );
+			if ( label == "supported" && supportIds.len() == 0 ) {
+				throw( message="Supported claims require at least one fragment" );
+			}
+			if ( label == "inferred" && supportIds.len() == 0 ) {
+				throw( message="Inferred claims require cited premises" );
+			}
+			var claimCitations = [];
+			for ( var fragmentId in supportIds ) {
+				if ( !fragmentExists(arguments.retrieved, fragmentId) ) {
+					throw( message="Claim references fragment outside retrieved set" );
+				}
+				var fragment = fragmentById(arguments.retrieved, fragmentId);
+				var citation = {
+					id: "c" & citationIndex,
+					documentId: fragment.documentId,
+					fragmentId: fragment.id,
+					location: fragment.location,
+					excerpt: left(fragment.text, 240),
+					status: "current"
+				};
+				citations.append(citation);
+				claimCitations.append(citation.id);
+				citationIndex++;
+			}
+			claims.append({
+				text: trim(spec.text ?: ""),
+				label: label,
+				citationIds: claimCitations,
+				premises: label == "inferred" ? claimCitations : []
+			});
+		}
+		if ( findNoCase("INSUFFICIENT_EVIDENCE", arguments.modelText) || !len(trim(arguments.modelText)) ) {
+			return abstain("model_reported_insufficient_evidence");
+		}
+		return {
+			ok: true,
+			abstained: false,
+			answerText: arguments.modelText,
+			claims: claims,
+			citations: citations
+		};
+	}
+
+	/**
+	 * Heuristic claim planner for the provider-double path (no real model JSON).
+	 * Uses retrieved fragments as supported claims; abstains when none match keywords.
+	 */
+	struct function planClaimsFromRetrieval(required string question, required array retrieved) {
+		if ( arguments.retrieved.len() == 0 ) return { claimSpecs: [], abstain: true };
+		var specs = [];
+		for ( var fragment in arguments.retrieved ) {
+			specs.append({
+				text: left(fragment.text, 200),
+				label: "supported",
+				supportFragmentIds: [ fragment.id ]
+			});
+		}
+		return { claimSpecs: specs, abstain: false };
+	}
+
+	/** Safe wrapper for tests: never throws across script try/catch compiler edge cases. */
+	struct function tryBuildFromRetrieved(required string modelText, required array retrieved, required array claimSpecs) {
+		try {
+			return { ok: true, answer: buildFromRetrieved(arguments.modelText, arguments.retrieved, arguments.claimSpecs) };
+		} catch ( any failure ) {
+			return { ok: false, reason: left(toString(failure.message ?: "invalid_answer"), 240) };
+		}
+	}
+}

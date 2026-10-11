@@ -1,0 +1,95 @@
+/**
+ * Role B — 03.2 chunking with source locations computed from content.
+ * Defaults from phase 00 local proposal: 8000 code points, 400 overlap, max 500 fragments.
+ */
+class {
+	property name="maxCodePoints" type="numeric" default=8000;
+	property name="overlapCodePoints" type="numeric" default=400;
+	property name="maxFragments" type="numeric" default=500;
+
+	function init(numeric maxCodePoints=8000, numeric overlapCodePoints=400, numeric maxFragments=500) {
+		if ( arguments.maxCodePoints < 1 || arguments.overlapCodePoints < 0 || arguments.overlapCodePoints >= arguments.maxCodePoints ) {
+			throw( message="Invalid chunker sizes" );
+		}
+		variables.maxCodePoints = arguments.maxCodePoints;
+		variables.overlapCodePoints = arguments.overlapCodePoints;
+		variables.maxFragments = arguments.maxFragments;
+		return this;
+	}
+
+	private numeric function codePointLen(required string text) {
+		return createObject("java", "java.lang.String").init(arguments.text).codePointCount(0, len(arguments.text));
+	}
+
+	private string function substringCodePoints(required string text, required numeric startExclusive, required numeric count) {
+		var javaString = createObject("java", "java.lang.String").init(arguments.text);
+		var startIndex = javaString.offsetByCodePoints(0, arguments.startExclusive);
+		var endIndex = javaString.offsetByCodePoints(startIndex, min(arguments.count, javaString.codePointCount(startIndex, javaString.length())));
+		return javaString.substring(startIndex, endIndex);
+	}
+
+	private struct function locationForSlice(required array lines, required string slice) {
+		var startLine = 1;
+		var endLine = arguments.lines.len();
+		if ( len(trim(arguments.slice)) ) {
+			var first = left(trim(arguments.slice), min(40, len(trim(arguments.slice))));
+			for ( var row in arguments.lines ) {
+				if ( find(first, row.text) || find(row.text, arguments.slice) ) {
+					startLine = row.line;
+					break;
+				}
+			}
+			var last = right(trim(arguments.slice), min(40, len(trim(arguments.slice))));
+			for ( var i = arguments.lines.len(); i >= 1; i-- ) {
+				var candidate = arguments.lines[i];
+				if ( find(last, candidate.text) || find(candidate.text, arguments.slice) ) {
+					endLine = candidate.line;
+					break;
+				}
+			}
+			if ( endLine < startLine ) endLine = startLine;
+		}
+		return {
+			kind: "lines",
+			lineStart: startLine,
+			lineEnd: endLine,
+			fragmentId: "L" & numberFormat(startLine, "000000") & "-L" & numberFormat(endLine, "000000")
+		};
+	}
+
+	array function chunkExtracted(required struct extracted) {
+		var text = arguments.extracted.text ?: "";
+		var lines = arguments.extracted.lines ?: [];
+		var total = codePointLen(text);
+		if ( total == 0 ) {
+			return [ {
+				fragmentIndex: 1,
+				text: "",
+				location: { kind: "lines", lineStart: 1, lineEnd: 1, fragmentId: "L000001-L000001" },
+				spaceId: arguments.extracted.spaceId,
+				documentId: arguments.extracted.documentId,
+				revisionId: arguments.extracted.revisionId
+			} ];
+		}
+		var fragments = [];
+		var offset = 0;
+		var index = 1;
+		while ( offset < total ) {
+			if ( index > variables.maxFragments ) throw( message="Document exceeds #variables.maxFragments# fragments" );
+			var slice = substringCodePoints(text, offset, variables.maxCodePoints);
+			var location = locationForSlice(lines, slice);
+			fragments.append({
+				fragmentIndex: index,
+				text: slice,
+				location: location,
+				spaceId: arguments.extracted.spaceId,
+				documentId: arguments.extracted.documentId,
+				revisionId: arguments.extracted.revisionId
+			});
+			if ( offset + variables.maxCodePoints >= total ) break;
+			offset = offset + variables.maxCodePoints - variables.overlapCodePoints;
+			index++;
+		}
+		return fragments;
+	}
+}

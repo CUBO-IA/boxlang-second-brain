@@ -1,0 +1,195 @@
+/**
+ * Role B — fragment persistence and authorized retrieval (03.3–03.4).
+ * Filters by space and selected documents in SQL before ranking.
+ * Uses direct pgvector SQL to avoid bx-ai findSimilar scientific parse issue.
+ */
+class {
+	private string function vectorLiteral(required array vector) {
+		if ( arguments.vector.len() != 1536 ) throw( message="Embedding must have 1,536 dimensions" );
+		return "[" & arguments.vector.toList(",") & "]";
+	}
+
+	private string function newId(required string prefix) {
+		return arguments.prefix & "-" & lCase(replace(createUUID(), "-", "", "all"));
+	}
+
+	struct function upsertDocument(
+		required string documentId,
+		required string spaceId,
+		required string revisionId,
+		required string name,
+		required string mediaType
+	) {
+		queryExecute(
+			"
+			INSERT INTO knowledge_documents (id, space_id, revision_id, name, media_type, status)
+			VALUES (?, ?, ?, ?, ?, 'staging')
+			ON CONFLICT (id) DO UPDATE SET
+				revision_id = EXCLUDED.revision_id,
+				name = EXCLUDED.name,
+				media_type = EXCLUDED.media_type,
+				status = 'staging',
+				updated_at = CURRENT_TIMESTAMP
+			",
+			[ arguments.documentId, arguments.spaceId, arguments.revisionId, arguments.name, arguments.mediaType ]
+		);
+		queryExecute(
+			"DELETE FROM knowledge_fragments WHERE document_id = ? AND revision_id <> ?",
+			[ arguments.documentId, arguments.revisionId ]
+		);
+		return { ok: true, documentId: arguments.documentId, revisionId: arguments.revisionId, status: "staging" };
+	}
+
+	struct function storeFragmentsStaging(required array fragments) {
+		for ( var fragment in arguments.fragments ) {
+			var id = newId("frag");
+			queryExecute(
+				"
+				INSERT INTO knowledge_fragments (
+					id, space_id, document_id, revision_id, fragment_index, text, location, embedding, published
+				) VALUES (
+					?, ?, ?, ?, CAST(? AS INTEGER), ?, CAST(? AS JSONB), NULL, FALSE
+				)
+				ON CONFLICT (document_id, revision_id, fragment_index) DO UPDATE SET
+					text = EXCLUDED.text,
+					location = EXCLUDED.location,
+					embedding = NULL,
+					published = FALSE
+				",
+				[
+					id,
+					fragment.spaceId,
+					fragment.documentId,
+					fragment.revisionId,
+					fragment.fragmentIndex,
+					fragment.text,
+					jsonSerialize(fragment.location)
+				]
+			);
+		}
+		return { ok: true, count: arguments.fragments.len() };
+	}
+
+	struct function attachEmbedding(
+		required string documentId,
+		required string revisionId,
+		required numeric fragmentIndex,
+		required array vector
+	) {
+		var literal = vectorLiteral(arguments.vector);
+		queryExecute(
+			"
+			UPDATE knowledge_fragments
+			SET embedding = CAST(? AS vector)
+			WHERE document_id = ? AND revision_id = ? AND fragment_index = CAST(? AS INTEGER)
+			",
+			[ literal, arguments.documentId, arguments.revisionId, arguments.fragmentIndex ]
+		);
+		return { ok: true };
+	}
+
+	struct function publishRevision(required string documentId, required string revisionId) {
+		transaction {
+			var pending = queryExecute(
+				"
+				SELECT COUNT(*) AS total,
+					COUNT(*) FILTER (WHERE embedding IS NULL) AS missing
+				FROM knowledge_fragments
+				WHERE document_id = ? AND revision_id = ?
+				",
+				[ arguments.documentId, arguments.revisionId ],
+				{ returntype: "array" }
+			);
+			if ( pending[1].total == 0 ) throw( message="No fragments to publish" );
+			if ( pending[1].missing > 0 ) throw( message="Cannot publish incomplete embeddings" );
+			queryExecute(
+				"
+				UPDATE knowledge_fragments
+				SET published = FALSE
+				WHERE document_id = ? AND revision_id <> ?
+				",
+				[ arguments.documentId, arguments.revisionId ]
+			);
+			queryExecute(
+				"
+				UPDATE knowledge_fragments
+				SET published = TRUE
+				WHERE document_id = ? AND revision_id = ?
+				",
+				[ arguments.documentId, arguments.revisionId ]
+			);
+			queryExecute(
+				"
+				UPDATE knowledge_documents
+				SET status = 'indexed', revision_id = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+				",
+				[ arguments.revisionId, arguments.documentId ]
+			);
+		}
+		return { ok: true, documentId: arguments.documentId, revisionId: arguments.revisionId, status: "indexed" };
+	}
+
+	struct function deleteDocument(required string documentId) {
+		transaction {
+			queryExecute("DELETE FROM knowledge_fragments WHERE document_id = ?", [ arguments.documentId ]);
+			queryExecute(
+				"UPDATE knowledge_documents SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+				[ arguments.documentId ]
+			);
+		}
+		return { ok: true, documentId: arguments.documentId, status: "deleted" };
+	}
+
+	/**
+	 * Authorized retrieval: space + selected document IDs applied in the query.
+	 * Empty or foreign selection does not widen to the whole collection.
+	 */
+	array function retrieve(
+		required string spaceId,
+		required array selectedDocumentIds,
+		required array queryVector,
+		numeric limit=8
+	) {
+		if ( !len(trim(arguments.spaceId)) ) throw( message="spaceId required" );
+		if ( !isArray(arguments.selectedDocumentIds) || arguments.selectedDocumentIds.len() == 0 ) {
+			return [];
+		}
+		var literal = vectorLiteral(arguments.queryVector);
+		var placeholders = [];
+		var params = [ literal, arguments.spaceId ];
+		for ( var docId in arguments.selectedDocumentIds ) {
+			placeholders.append("?");
+			params.append(docId);
+		}
+		params.append(literal);
+		params.append(arguments.limit);
+		var sql = "
+			SELECT id, space_id AS spaceId, document_id AS documentId, revision_id AS revisionId,
+				fragment_index AS fragmentIndex, text, location::text AS locationJson,
+				(1 - (embedding <=> CAST(? AS vector))) AS score
+			FROM knowledge_fragments
+			WHERE published = TRUE
+			  AND space_id = ?
+			  AND document_id IN (" & placeholders.toList(",") & ")
+			  AND embedding IS NOT NULL
+			ORDER BY embedding <=> CAST(? AS vector)
+			LIMIT CAST(? AS INTEGER)
+		";
+		var rows = queryExecute(sql, params, { returntype: "array" });
+		var output = [];
+		for ( var row in rows ) {
+			output.append({
+				id: row.id,
+				spaceId: row.spaceId,
+				documentId: row.documentId,
+				revisionId: row.revisionId,
+				fragmentIndex: row.fragmentIndex,
+				text: row.text,
+				location: jsonDeserialize(row.locationJson),
+				score: row.score
+			});
+		}
+		return output;
+	}
+}
