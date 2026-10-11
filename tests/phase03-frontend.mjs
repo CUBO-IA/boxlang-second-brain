@@ -23,6 +23,12 @@ async function request(path, session, { method = "GET", body, raw = false, csrf 
   return { status: response.status, body: payload, headers: response.headers };
 }
 
+function assertErrorEnvelope(response, status) {
+  assert.equal(response.status, status);
+  assert.deepEqual(Object.keys(response.body).sort(), ["category", "errorCategory", "message"]);
+  assert.equal(response.body.message, "No se pudo completar la operación.");
+}
+
 async function login(role) {
   const response = await request("/api/auth/login", null, {
     method: "POST",
@@ -49,9 +55,10 @@ assert.equal(sourceResult.status, 200);
 assert.equal(sourceResult.body.source.kind, "note");
 assert.equal(sourceResult.body.source.revisionId, note.version);
 assert.ok(sourceResult.body.source.lines.length > 0);
-assert.equal((await request(`${docsPath}/${note.id}/source`)).status, 401);
-assert.equal((await request(`${docsPath}/not-a-uuid/source`, owner)).status, 404);
-assert.equal((await request(`${docsPath}/${note.id}/source`, owner, { method: "POST", body: {} })).status, 405);
+assertErrorEnvelope(await request(`${docsPath}/${note.id}/source`), 401);
+assertErrorEnvelope(await request(`${docsPath}/not-a-uuid/source`, owner), 404);
+assertErrorEnvelope(await request(`${docsPath}/${note.id}/source`, owner, { method: "POST", body: {} }), 405);
+assertErrorEnvelope(await request(docsPath, owner, { method: "POST", body: {} }), 415);
 
 const list = await request(`/api/spaces/${space.id}/conversations?offset=0&limit=50`, owner);
 assert.equal(list.status, 200);
@@ -88,7 +95,7 @@ const oversizedChat = await request(`/api/conversations/${conversation.id}/messa
   body: JSON.stringify({ question: "q".repeat(32_769), scope: { mode: "space" } }),
   raw: true,
 });
-assert.equal(oversizedChat.status, 413);
+assertErrorEnvelope(oversizedChat, 413);
 assert.equal(oversizedChat.body.category, "limit");
 
 const oversizedNote = await request(`/api/spaces/${space.id}/notes`, owner, {
@@ -96,18 +103,18 @@ const oversizedNote = await request(`/api/spaces/${space.id}/notes`, owner, {
   body: JSON.stringify({ title: "oversized", body: "n".repeat(1_100_001), operationKey: `cap-${run}` }),
   raw: true,
 });
-assert.equal(oversizedNote.status, 413);
+assertErrorEnvelope(oversizedNote, 413);
 assert.equal(oversizedNote.body.category, "limit");
 
-assert.equal((await request(`/api/spaces/${space.id}/notes`, owner, {
+assertErrorEnvelope(await request(`/api/spaces/${space.id}/notes`, owner, {
   method: "POST",
   body: { title: "csrf check", body: "no write", operationKey: `csrf-${run}` },
   csrf: "wrong",
-})).status, 403);
-assert.equal((await request(`/api/spaces/${space.id}/notes`, owner, {
+}), 403);
+assertErrorEnvelope(await request(`/api/spaces/${space.id}/notes`, owner, {
   method: "POST",
   body: { title: "origin check", body: "no write", operationKey: `origin-${run}` },
   requestOrigin: "https://invalid.example",
-})).status, 403);
+}), 403);
 
-console.log("OK: real Next → BoxLang proxy operations, cookie-only auth, no-store, strict IDs/methods, source and citation revision/offset forwarding, shared read-only permission, CSRF/Origin, empty scope, and exact 32,768/1,100,000-byte caps; no provider calls.");
+console.log("OK: real Next → BoxLang proxy operations, cookie-only auth, no-store, strict IDs/methods, uniform local/BoxLang error envelopes, source and citation revision/offset forwarding, shared read-only permission, CSRF/Origin, empty scope, and exact 32,768/1,100,000-byte caps; no provider calls.");

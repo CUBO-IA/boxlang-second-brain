@@ -140,11 +140,11 @@ function resolveLibraryOperation(parts: string[], method: string, spaceId: strin
 // never hands the handler more bytes than Content-Length announces.
 function rejectStream(request: Request, limit: number): Response | null {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
-    return jsonResponse({ message: "El formato de la solicitud no es compatible.", category: "format" }, 415);
+    return jsonError("unsupported_media_type", "format", 415);
   }
   const declared = request.headers.get("content-length") ?? "";
   if (!/^[0-9]{1,15}$/.test(declared) || Number(declared) > limit) {
-    return jsonResponse({ message: "La solicitud supera el tamaño permitido.", category: "limit" }, 413);
+    return jsonError("body_too_large", "limit", 413);
   }
   return null;
 }
@@ -187,8 +187,8 @@ async function readBody(request: Request, limit: number): Promise<Uint8Array> {
   return body;
 }
 
-function jsonResponse(body: object, status: number): Response {
-  return Response.json(body, {
+function jsonError(errorCategory: string, category: string, status: number): Response {
+  return Response.json({ errorCategory, category, message: "No se pudo completar la operación." }, {
     status,
     headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" },
   });
@@ -199,8 +199,8 @@ async function delegate(request: Request): Promise<Response> {
   const parts = url.pathname.split("/").filter(Boolean).slice(1);
   const route = resolveOperation(url.pathname, request.method) ?? resolveConversationOperation(parts, request.method);
   if (!route) return knownKnowledgePath(parts)
-    ? jsonResponse({ message: "El método no está permitido.", category: "method" }, 405)
-    : jsonResponse({ message: "No se encontró la operación." }, 404);
+    ? jsonError("method", "unknown", 405)
+    : jsonError("not_found", "not_found", 404);
 
   let body: Uint8Array = new Uint8Array();
   if (route.streamLimit) {
@@ -210,7 +210,7 @@ async function delegate(request: Request): Promise<Response> {
     try {
       body = await readBody(request, route.bodyLimit ?? bodyLimit);
     } catch {
-      return jsonResponse({ message: "La solicitud supera el tamaño permitido.", category: "limit" }, 413);
+      return jsonError("body_too_large", "limit", 413);
     }
   }
 
@@ -261,7 +261,7 @@ async function delegate(request: Request): Promise<Response> {
     const upstream = await fetch(backend, init);
     if (route.download && upstream.ok) return downloadResponse(upstream);
     if (!upstream.headers.get("content-type")?.includes("application/json")) {
-      return jsonResponse({ message: "El servicio no está disponible." }, 502);
+      return jsonError("internal", "unknown", 502);
     }
     const responseHeaders = new Headers({
       "content-type": "application/json; charset=utf-8",
@@ -272,7 +272,7 @@ async function delegate(request: Request): Promise<Response> {
     if (setCookie) responseHeaders.set("set-cookie", setCookie);
     return new Response(await upstream.arrayBuffer(), { status: upstream.status, headers: responseHeaders });
   } catch {
-    return jsonResponse({ message: "El servicio no está disponible." }, 502);
+    return jsonError("internal", "unknown", 502);
   }
 }
 

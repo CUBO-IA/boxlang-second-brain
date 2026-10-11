@@ -583,9 +583,9 @@ export function LibraryPanel({
         {dialogMode === "edit" && noteEditor ? (
           <form className="note-editor" onSubmit={(event) => void saveNote(event)} aria-busy={noteBusy}>
             <label htmlFor="note-title">{t.noteTitle}</label>
-            <input id="note-title" required maxLength={255} value={noteEditor.title} onChange={(event) => setNoteEditor({ ...noteEditor, title: event.target.value, operationKey: "" })} />
+            <input id="note-title" required maxLength={255} disabled={noteBusy} value={noteEditor.title} onChange={(event) => setNoteEditor({ ...noteEditor, title: event.target.value, operationKey: "" })} />
             <label htmlFor="note-body">{t.noteBody}</label>
-            <textarea id="note-body" required rows={14} value={noteEditor.body} onChange={(event) => setNoteEditor({ ...noteEditor, body: event.target.value, operationKey: "" })} aria-describedby="note-body-hint" />
+            <textarea id="note-body" required rows={14} disabled={noteBusy} value={noteEditor.body} onChange={(event) => setNoteEditor({ ...noteEditor, body: event.target.value, operationKey: "" })} aria-describedby="note-body-hint" />
             <p className="field-hint" id="note-body-hint">{t.noteBodyHint} {new Intl.NumberFormat(language).format(new TextEncoder().encode(noteEditor.body).byteLength)} / 1,048,576 bytes</p>
             {noteError && <p className="notice" role="alert">{noteError}</p>}
             <div className="composer-footer"><span>{t.noteBodyHint}</span><button className="button primary" type="submit" disabled={noteBusy || !noteEditor.title.trim() || !noteEditor.body.length}>{noteBusy ? t.noteSaving : t.noteSave}</button></div>

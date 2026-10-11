@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../lib/api";
+import { handleAuthorizationFailure } from "../lib/authorization-error.mjs";
 import {
   createConversation,
   listConversations,
@@ -266,7 +267,7 @@ export function ConversationPanel({
       setHasMore(result.hasMore);
     } catch (failure) {
       if (controller.signal.aborted) return;
-      if (epoch !== detailEpoch.current) return;
+      if (handleAuthorizationFailure(failure, () => epoch === detailEpoch.current, { onSessionExpired, onForbidden })) return;
       if (failure instanceof ApiError && failure.status === 404) loseConversation(id);
       else setError(messageError(failure, t));
     } finally { actionControllers.current.delete(controller); if (!controller.signal.aborted && epoch === detailEpoch.current) setBusy(""); }
@@ -286,8 +287,8 @@ export function ConversationPanel({
       setConversations((items) => items.map((item) => item.id === result.conversation.id ? { ...item, shared: result.conversation.shared } : item));
     } catch (failure) {
       if (controller.signal.aborted) return;
-      if (failure instanceof ApiError && failure.status === 401) onSessionExpired();
-      else if (failure instanceof ApiError && failure.status === 404) loseConversation(active.id);
+      if (handleAuthorizationFailure(failure, () => epoch === detailEpoch.current, { onSessionExpired, onForbidden })) return;
+      if (failure instanceof ApiError && failure.status === 404) loseConversation(active.id);
       else setError(messageError(failure, t));
     } finally { actionControllers.current.delete(controller); if (!controller.signal.aborted && epoch === detailEpoch.current) setBusy(""); }
   }
