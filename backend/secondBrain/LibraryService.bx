@@ -80,7 +80,7 @@ class {
 		var checkedName = arguments.provenanceKind == "note" ? "note.txt" : arguments.name;
 		var info = validateFile(arguments.file, checkedName);
 		if ( len(arguments.mediaTypeOverride) ) info.mediaType = arguments.mediaTypeOverride;
-		var signature = lCase(hash(jsonSerialize([arguments.name, info.hash, arguments.documentId]), "SHA-256"));
+		var signature = lCase(hash(jsonSerialize([arguments.name, info.hash, arguments.documentId, arguments.provenanceKind, info.mediaType]), "SHA-256"));
 		var version = uuid();
 		var document = len(arguments.documentId) ? arguments.documentId : uuid();
 		var task = uuid();

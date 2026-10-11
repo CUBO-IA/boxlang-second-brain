@@ -6,6 +6,11 @@ import secondBrain.ProviderDouble;
 
 if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="Use isolated Compose with P02_ISOLATED_DATABASE=YES");
 function verify(required boolean condition, required string message) { if ( !arguments.condition ) throw(message=arguments.message); }
+function conflicts409(required any action) {
+	try { arguments.action(); }
+	catch (any error) { return error.type == "SecondBrain.Library" && toNumeric(error.errorCode) == 409; }
+	return false;
+}
 
 runId = lCase(left(replace(createUUID(), "-", "", "all"), 12));
 email = "pipeline-#runId#@example.invalid";
@@ -30,12 +35,30 @@ documentIds = [];
 try {
 	queryExecute("INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), 20) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = GREATEST(budget_days.limit_usd, EXCLUDED.limit_usd)", [core.getBudget().snapshot().dayUtc]);
 
+	// Kind/media type participate in idempotency: cross-kind key reuse must conflict.
+	fileWrite(temp & "/kind.txt", "same body", "UTF-8");
+	kindUploadKey = "kind-upload-#runId#";
+	kindUpload = service.acceptFile(input, temp & "/kind.txt", "note.txt", kindUploadKey);
+	documentIds.append(kindUpload.documentId);
+	kindUploadReplay = service.acceptFile(input, temp & "/kind.txt", "note.txt", kindUploadKey);
+	verify(kindUploadReplay.replay && kindUploadReplay.documentId == kindUpload.documentId && kindUploadReplay.versionId == kindUpload.versionId, "Same-kind upload replay preserves identity");
+	verify(conflicts409(() => service.createNote(input, "note.txt", "same body", kindUploadKey)), "Upload-to-note operation-key reuse conflicts");
+	service.deleteDocument(input, kindUpload.documentId);
+
+	kindNoteKey = "kind-note-#runId#";
+	kindNote = service.createNote(input, "note.txt", "same body", kindNoteKey);
+	documentIds.append(kindNote.documentId);
+	kindNoteReplay = service.createNote(input, "note.txt", "same body", kindNoteKey);
+	verify(kindNoteReplay.replay && kindNoteReplay.documentId == kindNote.documentId && kindNoteReplay.versionId == kindNote.versionId, "Same-kind note replay preserves identity");
+	verify(conflicts409(() => service.acceptFile(input, temp & "/kind.txt", "note.txt", kindNoteKey)), "Note-to-upload operation-key reuse conflicts");
 	fileWrite(temp & "/one.txt", "Línea uno" & char(13) & char(10) & "Línea dos", "UTF-8");
 	first = service.acceptFile(input, temp & "/one.txt", "one.txt", "one-#runId#");
 	fileWrite(temp & "/two.txt", "A separate source about the second topic.", "UTF-8");
 	second = service.acceptFile(input, temp & "/two.txt", "two.txt", "two-#runId#");
 	note = service.createNote(input, "Nota acentuada", "Primera línea" & char(13) & char(10) & "Segunda línea ñ.", "note-#runId#");
-	documentIds = [first.documentId, second.documentId, note.documentId];
+	documentIds.append(first.documentId);
+	documentIds.append(second.documentId);
+	documentIds.append(note.documentId);
 	for ( task in [first, second, note] ) verify(worker.processOne(task.taskId).status == "completed", "Durable task publishes real extracted embeddings");
 	fileWrite(temp & "/later.md", "Unsupported later-phase format.", "UTF-8");
 	laterFormat = service.acceptFile(input, temp & "/later.md", "later.md", "later-#runId#");
