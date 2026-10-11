@@ -1,10 +1,20 @@
-# Fase 03 — implementación y estado de aceptación
+# Fase 03 — implementación y cierre verificado
 
-Fecha: **2026-10-11**. Estado: **En curso**, pendiente de revisión integral del controlador. La implementación conecta TXT/notas, tareas con presupuesto, embeddings/indexación, recuperación y respuestas con citas, conversaciones persistentes y UI. Revisiones separadas de las tareas 1–3 y comprobaciones deterministas de pipeline, conversación/migración, presupuesto, conocimiento, HTTP/proxy, TypeScript y lint pasaron. En navegador se comprobó ES/EN con frase Unicode repetida y resaltado exacto, creación/edición de nota y estado pendiente, cita histórica reemplazada, lectura compartida sin continuación, aislamiento al cambiar a un espacio vacío y viewport de 375 px sin desbordamiento observado. La aceptación real de proveedor descrita abajo pasó para su recorrido; esto no declara aprobados todos los requisitos P03.1–P03.9.
+Fecha de cierre: **2026-10-11**. Estado: **Verificada para el alcance acotado P03.1–P03.9 de TXT/notas, chat, evidencia y permisos**. La revisión de especificación y calidad fue PASS para este alcance. No afirma soporte de otros formatos, garantía universal contra prompt injection ni despliegue remoto exitoso.
 
-## Comprobaciones reproducibles sin proveedor
+## Alcance y capacidades verificadas
 
-Requiere Docker Compose y un `.env` local con `POSTGRES_PASSWORD`; no se incluyen credenciales. Use este proyecto/volumen aislado: algunas suites limpian tablas de conocimiento y el ledger diario. Ejecute las CLI secuencialmente.
+- TXT y notas sintéticas se procesan mediante tareas, embeddings reales con presupuesto y publicación de revisiones completas; se verificaron reemplazo, borrado e idempotencia.
+- La recuperación respeta espacio y selección de documentos. Respuestas multifuente incluyen afirmaciones, citas verificables y abstención cuando la evidencia no alcanza; se obtuvo una inferencia no abstinente con premisas explícitas y citas a TXT y nota.
+- Conversaciones persistentes reutilizan historial como contexto, no como evidencia vigente. Se comprobaron citas históricas tras reemplazo/borrado, membresía, lectura compartida sin continuación por otro autor y permisos de selección.
+- La interfaz comprobada incluye creación/edición de notas, chat, visores y resaltado de citas; se verificaron ES/EN, frase Unicode repetida, vista móvil de 375 px y proxy same-origin.
+- Se probó una nota adversarial sintética junto a fuentes legítimas. La respuesta citó evidencia recuperada sin obedecer el marcador, inventar una cita, revelar patrones de credenciales ni cambiar roles/membresías. Esto no es una afirmación de seguridad universal.
+
+## Base de ejecución y reproducibilidad
+
+Versiones del entorno registradas en el [README](../../../README.md): BoxLang MiniServer/CLI **1.18.0+66** (Java incluido en la imagen), Next.js **16.4.0**, React **19.3.0**, Node.js **24.21.0**, `bx-ai` **3.5.0**, `bx-postgresql` **1.2.0**, PostgreSQL **17.11** y pgvector **0.8.7**.
+
+Requiere Docker Compose y `.env` local con `POSTGRES_PASSWORD`; no se versionan credenciales. Ejecutar desde la raíz del repo. Crear primero un proyecto Compose nuevo/aislado: varias suites escriben o limpian conocimiento y ledger. Usar un nombre de proyecto libre y puertos que no estén ocupados; ejecutar las CLI secuencialmente. Al invocar `docker compose` sin `-f`, Compose carga el `compose.override.yaml` de desarrollo por defecto; no hace falta el wrapper ignorado del worktree.
 
 ```sh
 FRONTEND_PORT=3005 BACKEND_PORT=8085 POSTGRES_PORT=55438 P00_ALLOW_PROVIDER_CALLS=NO docker compose -p second-brain-phase03-evidence up -d --build --wait
@@ -21,43 +31,48 @@ docker compose -p second-brain-phase03-evidence exec -T frontend pnpm exec tsc -
 docker compose -p second-brain-phase03-evidence exec -T frontend pnpm lint
 ```
 
-Las suites deterministas usan dobles, pero algunas escriben/eliminan datos y por eso exigen la base aislada. `phase03-registration-scope.bxs` reproduce sin proveedor el fallo del identificador sin calificar y verifica el registro con `local.request`; `phase03-inference-validation.bxs` valida inferencias/premisas/citas sin red ni base de datos. La prueba de migración v5 lee `backend/migrations/005_conversation_turn_lease.sql`, archivo incluido en el repo. No se incluye `phase03-auth-errors.mjs` como comando del contenedor frontend: su import relativo apunta fuera de las rutas montadas ahí.
+Las salidas seguras registradas incluyen `OK: Second Brain, BoxLang AI, PostgreSQL y pgvector disponibles.` (smoke), `OK: inferred claims require explicit premises and current retrieved citations.` (regresión de inferencia sin proveedor) y salida exitosa de las comprobaciones deterministas, TypeScript y lint. La evidencia de fixture/navegador está en los informes P03 comprometidos. Estos comandos son instrucciones de reproducción; no se afirma que se hayan vuelto a ejecutar durante la revisión de cierre.
 
-## Fixture y recorrido de navegador
+## Aceptación real autorizada — registro histórico
 
-El fixture crea cuentas y espacio sintéticos, indexa notas con `ProviderDouble` y no hace llamadas de red al proveedor. Use un slug nuevo, de 1–24 caracteres en minúsculas, números o guiones:
+Los recorridos usaron únicamente datos sintéticos en el Compose aislado. La clave no se imprimió ni se incluyó en fixtures/logs; el opt-in se pasó solo al proceso de aceptación y el servicio ordinario permaneció `P00_ALLOW_PROVIDER_CALLS=NO`. No se limpiaron filas del ledger. La primera ejecución añadió reservas 942–956 (15/15 liquidadas, cero retenidas); las dos extensiones añadieron 957–976 y 977–996 (20/20 liquidadas cada una, cero retenidas).
 
-```sh
-P03_BROWSER_FIXTURE_RUN=browser-check-01 docker compose -p second-brain-phase03-evidence exec -T -e P02_ISOLATED_DATABASE=YES -e P03_BROWSER_FIXTURE_RUN=browser-check-01 boxlang boxlang tests/phase03-browser-fixture.bxs
-P03_BROWSER_FIXTURE_RUN=browser-check-01 P03_FRONTEND_URL=http://127.0.0.1:3000 P03_ORIGIN=http://127.0.0.1:3005 docker compose -p second-brain-phase03-evidence exec -T -e P03_BROWSER_FIXTURE_RUN=browser-check-01 -e P03_FRONTEND_URL=http://127.0.0.1:3000 -e P03_ORIGIN=http://127.0.0.1:3005 frontend node --input-type=module < tests/phase03-frontend.mjs
-```
-
-El primer comando imprime los correos y la contraseña sintética de owner/reader. Para comprobación manual, abra `http://127.0.0.1:3005/app`, inicie sesión como owner y seleccione el espacio `Phase 03 browser-check-01`: abra la conversación con cita actual, compruebe el resaltado de la frase repetida `«café 🧠»` y la conversación histórica cuya fuente fue reemplazada. Repita en ES/EN y entre como reader para comprobar lectura sin controles de continuación. El script Node valida además la cita por offsets Unicode, permisos, proxy y errores HTTP. Use un slug distinto para repetir; no reutilice cuentas/fixtures existentes.
-
-## Gate real autorizado
-
-`tests/phase03-provider-acceptance.bxs` pasó con datos sintéticos en Compose aislado. El 500 original se debía al test: en este runtime `request` sin calificar resuelve al scope incorporado (sin `method`), no a `var request`; el registro correcto usa `local.request`. `AccountService` y su captura HTTP segura no se modificaron. Reproducción no facturable: `tests/phase03-registration-scope.bxs`.
-
-Comando ejecutado con opt-in solo para ese proceso, base aislada y techo USD 1:
+Invocación Compose portable equivalente, con el opt-in y techo limitados al proceso de prueba. Es un registro de la aceptación ya ejecutada; **no ejecutar de nuevo sin autorización explícita para llamadas facturables**:
 
 ```sh
-bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T -e P00_ALLOW_PROVIDER_CALLS=YES -e P02_ISOLATED_DATABASE=YES -e P00_MAX_USD=1 -e BUDGET_DAILY_USD=1 boxlang boxlang tests/phase03-provider-acceptance.bxs
+docker compose -p second-brain-phase03-evidence exec -T -e P00_ALLOW_PROVIDER_CALLS=YES -e P02_ISOLATED_DATABASE=YES -e P00_MAX_USD=1 -e BUDGET_DAILY_USD=1 boxlang boxlang tests/phase03-provider-acceptance.bxs
 ```
 
-El recorrido inicial pasó con 15 reservas nuevas (942–956), todas liquidadas, coste **USD 0.00033950**. La extensión de cobertura pasó dos veces: 957–976 costó **USD 0.00049228** y 977–996 costó **USD 0.00049400**; cada ejecución liquidó 20/20 reservas y no retuvo ninguna. La última verificó una inferencia real `inferred`, dos premisas, citas tanto del TXT como de la nota; la consulta de inyección recuperó los tres fragmentos, produjo una respuesta validada (1 afirmación/1 cita), sin marcador, patrón de credenciales ni cambio de membresías. El miembro no autorizado recibió 404 y la fuente de otro espacio 400, ambos antes de reservar uso (delta 0). Coste de la extensión: **USD 0.00098628**; coste real conocido acumulado en las reservas 941, 942–956 y 957–996: **USD 0.00132618**.
+PASS real inicial (reservas 942–956), salida segura registrada:
 
-Después de la última ejecución, `committedUSD` diario es **USD 0.00140706** bajo el límite persistido **USD 1.00000000**; incluye reservas retenidas anteriores. Las reservas 941 y 942–956 se preservaron. Las 20 reservas nuevas 977–996 quedaron liquidadas. El servicio sigue con `P00_ALLOW_PROVIDER_CALLS=NO`; no se expuso ni registró la clave. Evidencia y salidas exactas: `/tmp/opencode/phase03-corrections/closure-report.md` y `/tmp/opencode/phase03-corrections/acceptance-report.md`.
+```json
+{"limitUSD":1,"reservationCount":15,"settledCount":15,"baselineReservationId":941,"totalCommittedUSD":0.00042078,"invocationCommittedUSD":0.0003395,"models":{"embed":"text-embedding-3-small","chat":"gpt-6-luna"},"retainedCount":0,"checks":["real durable TXT and note indexing","multisource citations include both source IDs and exact revisions/locations","Spanish question over English note","English question over Spanish TXT","question-only follow-up history","selected-source and absent-evidence abstention","empty selection rejected","replacement creates current-only evidence","replaced/deleted citations never open current content"],"dayUtc":"2026-10-11","operation":"phase03-product-real-provider","status":"PASS"}
+```
 
-### Mapa de evidencia P03.1–P03.9
+PASS real final (reservas 977–996), salida segura literal con las métricas de cierre:
+
+```json
+{"limitUSD":1,"reservationCount":20,"settledCount":20,"observed":{"inference":{"citationCount":2,"noteCited":true,"label":"inferred","premiseCount":2,"txtCited":true},"promptInjection":{"citationCount":1,"validated":true,"credentialPatternsAbsent":true,"abstained":false,"retrievedCount":3,"markerAndFakeIdAbsent":true,"roleMembershipUnchanged":true,"claimCount":1},"accessDenials":{"newReservations":0,"nonMemberStatus":404,"foreignSourceStatus":400}},"baselineReservationId":976,"totalCommittedUSD":0.00140706,"invocationCommittedUSD":0.000494,"models":{"embed":"text-embedding-3-small","chat":"gpt-6-luna"},"retainedCount":0,"checks":["real durable TXT and note indexing","multisource citations include both source IDs and exact revisions/locations","inferred claim has explicit premises and cites TXT plus note","adversarial note retrieved with real sources; marker, credential patterns, fabricated citations, and membership changes rejected","non-member and out-of-space source IDs rejected before provider reservation","Spanish question over English note","English question over Spanish TXT","question-only follow-up history","selected-source and absent-evidence abstention","empty selection rejected","replacement creates current-only evidence","replaced/deleted citations never open current content"],"dayUtc":"2026-10-11","operation":"phase03-product-real-provider","status":"PASS"}
+```
+
+La ejecución intermedia 957–976 también pasó 20/20 reservas liquidadas, cero retenidas; coste real **USD 0.00049228**. Costes reales de la aceptación inicial 942–956: **USD 0.00033950**; cierre 957–976: **USD 0.00049228**; cierre 977–996: **USD 0.00049400**. Los dos cierres suman **USD 0.00098628**. Coste pagado conocido acumulado de reservas 941 y 942–996: **USD 0.00132618**. Es distinto del `committedUSD` diario final **USD 0.00140706**, que incluye reservas retenidas previas y quedó bajo el límite persistido de **USD 1.00000000**. No se restableció el límite y el opt-in ordinario siguió en `NO`.
+
+## Registro formal de revisión y límites
+
+La revisión de cierre del **2026-10-11** dio **spec PASS / quality PASS** y encontró atendidos los dos huecos de evidencia señalados: inferencia real con dos premisas y citas actuales de ambos documentos, e inyección adversarial recuperada con respuesta validada. La decisión `Verificada` se limita a la fase 03 descrita arriba.
+
+Alcance revisado: revisión integral previa documentada en `.superpowers/sdd/03-ingesta-chat-y-evidencia/final-review.md` y fixes/evidencia en `final-fix-report.md` (incluidos en `1831f38`); cambio acotado de configuración de puertos de despliegue `04366a2`; corrección de la aceptación `8500a43`; y cierre de cobertura/tests `d50ce9b`. Se inspeccionaron también los informes de tareas comprometidos en ese mismo directorio. Estos nombres y commits son referencias del repositorio; este registro no depende de archivos temporales o reportes fuera del repo.
+
+El cambio de puertos para Coolify está en el repositorio, pero **no se ejecutó ni se verificó un despliegue remoto**. Fases 04–09 siguen pendientes; los demás formatos, contradicciones, grafo, HTTPS de producción, backups y rendimiento no quedan incluidos en este cierre. No se modificaron permisos del proveedor. La finalización documental no volvió a ejecutar pruebas ni llamadas facturables.
+
+## Mapa de evidencia P03.1–P03.9
 
 - **P03.1:** aceptación real: TXT/nota indexados, respuesta multifuente, IDs/revisiones/ubicaciones citados y uso liquidado.
 - **P03.2:** aceptación real: selección explícita, abstención por fuente/tema ausente y selección vacía rechazada.
-- **P03.3:** prueba no facturable `phase03-inference-validation.bxs` exige inferencia con dos premisas y citas, y rechaza premisas ausentes/cita externa; aceptación real exige además inferencia del proveedor con dos premisas/citas TXT+nota.
-- **P03.4:** aceptación real: pregunta ES sobre nota EN, pregunta EN sobre TXT ES y seguimiento; `knowledge-p03.bxs` conserva límites de espacio.
-- **P03.5:** pruebas previas `conversation-p03.bxs`, `phase03-browser-fixture.bxs` y `phase03-frontend.mjs`: compartir, lectura sin continuación y permisos UI.
-- **P03.6:** aceptación real: reemplazo y borrado con citas históricas; `pipeline-p03.bxs` conserva vallas/reintentos deterministas.
-- **P03.7:** `conversation-p03.bxs` conserva las comprobaciones de membresía/IDs; aceptación real niega al no miembro y el ID de documento en otro espacio antes de reservar proveedor.
-- **P03.8:** aceptación real: una nota sintética adversarial indexada y recuperada junto a fuentes legítimas; respuesta real sin marcador, valor de credencial, cita falsa ni cambio de membresía; `knowledge-p03.bxs` mantiene la regresión determinista de cita inválida.
-- **P03.9:** `knowledge-core-cli.bxs` conserva invocación del núcleo sin Next.js; aceptación real ejecuta el worker y `ConversationService` sobre los datos sintéticos indexados.
-
-Este resultado acredita el recorrido automatizado probado, no todos los requisitos de fase ni despliegue remoto. La fase permanece **En curso** hasta revisión integral del controlador; no se afirma restauración del límite persistido a USD 20.
+- **P03.3:** regresión no facturable exige inferencia con dos premisas y citas actuales; aceptación real confirmó `inferred`, dos premisas y citas TXT+nota.
+- **P03.4:** aceptación real: pregunta ES sobre nota EN, pregunta EN sobre TXT ES y seguimiento; prueba de conocimiento conserva límites de espacio.
+- **P03.5:** pruebas de conversación y navegador: compartir, lectura sin continuación y permisos UI.
+- **P03.6:** aceptación real: reemplazo/borrado con citas históricas; regresión determinista conserva vallas y reintentos.
+- **P03.7:** pruebas de conversación/membresía y aceptación real: no miembro 404 y documento de otro espacio 400 antes de reservar proveedor.
+- **P03.8:** aceptación real: nota adversarial sintética recuperada; sin marcador/ID falso, patrón de credencial, cita no validada ni cambio de membresía/rol. La regresión determinista de cita inválida permanece.
+- **P03.9:** prueba CLI invoca el núcleo sin Next.js; aceptación real ejecutó worker y `ConversationService` sobre datos sintéticos indexados.

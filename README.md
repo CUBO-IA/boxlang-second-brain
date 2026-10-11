@@ -1,6 +1,6 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y biblioteca privada. La implementación de fase 03 conecta TXT/notas con tareas de indexación, presupuesto, recuperación con evidencia y conversaciones persistentes; Next.js delega same-origin a BoxLang. La fase sigue **En curso**, pendiente de revisión integral: pruebas deterministas/UI y el recorrido automatizado autorizado con proveedor real pasan.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y biblioteca privada. La fase 03 está **Verificada en su alcance acotado**: TXT/notas, indexación con embeddings, recuperación con evidencia, afirmaciones inferidas con premisas, citas y conversaciones persistentes; Next.js delega same-origin a BoxLang. La revisión aprobó P03.1–P03.9 con pruebas deterministas/UI y aceptación sintética autorizada con proveedor real. Otros formatos, grafo, contradicciones, seguridad universal frente a inyección y despliegue remoto no quedan acreditados.
 
 ## Entorno
 
@@ -88,7 +88,7 @@ Los probes sintéticos validaron chat/embedding reales, uso, 1.536 dimensiones y
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Estado: fases **00, 01 y 02 Verificadas**; fase **03 En curso**, aceptación automatizada real pasada y revisión integral pendiente. Los cierres anteriores no acreditan las fases posteriores. La evidencia actual de fase 03 está en [el registro de implementación](docs/plan/evidence/phase03-implementation.md).
+Estado: fases **00, 01, 02 y 03 Verificadas** dentro de sus alcances documentados. La fase 03 cubre TXT/notas, chat y evidencia; su revisión no acredita las fases posteriores ni el despliegue remoto. Consulte [el registro de implementación y cierre](docs/plan/evidence/phase03-implementation.md).
 
 Comprobaciones de fase 00 sin llamadas IA:
 
@@ -103,7 +103,7 @@ La ruta de desarrollo `http://127.0.0.1:3000/feasibility` abre únicamente fixtu
 
 ## Alcance pendiente
 
-La ingesta implementada se limita a TXT y notas; los demás formatos, contradicciones y grafo siguen pendientes. El recorrido automatizado autorizado con proveedor real pasó; esto no sustituye los requisitos restantes ni la revisión integral de fase 03. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+La ingesta verificada se limita a TXT y notas; los demás formatos, contradicciones y grafo siguen pendientes. El cambio de configuración de puertos para Coolify está en el repositorio (`04366a2`), pero el despliegue remoto no se ha probado. HTTPS de producción, backups y rendimiento aún no se han verificado. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
 
 ## Fase 02 — integración A+B+C
 
