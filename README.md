@@ -1,6 +1,6 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y almacenamiento privado/tareas de biblioteca (fase 02). Frontend Next.js con biblioteca y delegación same-origin a BoxLang. Todavía no hay pipeline de ingesta/IA conectado a la biblioteca: guardar originales no los hace disponibles para consultas.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y biblioteca privada. La implementación de fase 03 conecta TXT/notas con tareas de indexación, presupuesto, recuperación con evidencia y conversaciones persistentes; Next.js delega same-origin a BoxLang. La fase sigue **En curso**: las pruebas deterministas y de UI pasan, pero la aceptación con proveedor real no ha pasado.
 
 ## Entorno
 
@@ -9,7 +9,7 @@
 - BoxLang AI (`bx-ai`) **3.5.0**, driver PostgreSQL (`bx-postgresql`) **1.2.0** y PostgreSQL **17.11** con pgvector **0.8.7**.
 - Docker Compose; no hace falta instalar runtimes ni módulos en el equipo.
 
-BoxLang AI ya integra PostgreSQL/pgvector para memoria vectorial y RAG. Las pruebas de fase 01 son deterministas y no realizan llamadas de IA.
+BoxLang AI ya integra PostgreSQL/pgvector para memoria vectorial y RAG. Las pruebas deterministas usan dobles y no realizan llamadas de IA; están separadas de la aceptación real de proveedor, aún pendiente. Ver [evidencia de fase 03](docs/plan/evidence/phase03-implementation.md) para comandos, alcance y bloqueo.
 
 ## Levantar el entorno
 
@@ -82,7 +82,7 @@ Los probes sintéticos validaron chat/embedding reales, uso, 1.536 dimensiones y
 
 Abre OpenCode desde esta carpeta para cargar `opencode.json` o consulta el MCP configurado en `https://boxlang.ortusbooks.com/~gitbook/mcp`. Referencias: [módulos Pure BoxLang](https://boxlang.ortusbooks.com/boxlang-framework/module-development/getting-started#pure-boxlang), [BoxLang Docker](https://boxlang.ortusbooks.com/getting-started/running-boxlang/docker), [BoxLang AI](https://ai.ortusbooks.com) y [pgvector](https://github.com/pgvector/pgvector).
 
-Estado: fases **00 y 01 Verificadas** en la carpeta original. El [registro de revisión](docs/plan/evidence/phase00-review.md) documenta el cierre de viabilidad, pruebas vectoriales/visores y revalidación de cuentas/permisos; no acredita las fases posteriores.
+Estado: fases **00, 01 y 02 Verificadas**; fase **03 En curso**. Los cierres anteriores no acreditan las fases posteriores. La evidencia actual de fase 03 y su gate pendiente están en [el registro de implementación](docs/plan/evidence/phase03-implementation.md).
 
 Comprobaciones de fase 00 sin llamadas IA:
 
@@ -95,9 +95,9 @@ docker compose run --rm --no-deps -v "$PWD:/repo:ro" -w /repo frontend node test
 
 La ruta de desarrollo `http://127.0.0.1:3000/feasibility` abre únicamente fixtures sintéticos fijos; incluye PDF original y Markdown renderizado con citas resaltadas. El subset Office, las licencias y límites están en el cierre técnico; no equivale a ingesta ni a visores privados de documentos de usuarios.
 
-## Alcance futuro, no implementado
+## Alcance pendiente
 
-La biblioteca todavía no conecta ingesta multiformato, recuperación con evidencia, contradicciones ni separación entre hechos e inferencias. B aporta un núcleo CLI provisional y ledger, no RAG de producto ni conciliación de facturación. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
+La ingesta implementada se limita a TXT y notas; los demás formatos, contradicciones y grafo siguen pendientes. La fase 03 aún requiere aceptación con proveedor real; los resultados deterministas no la sustituyen. Despliegue HTTPS, backups y rendimiento aún no se ejecutaron. No se han guardado secretos, documentos privados ni claves de IA en el repositorio.
 
 ## Fase 02 — integración A+B+C
 

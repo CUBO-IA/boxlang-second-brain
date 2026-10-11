@@ -1,6 +1,6 @@
 # Fase 03 — Ingesta TXT/notas, chat y evidencia
 
-**Estado:** Pendiente. **Dependencia:** [fase 02](02-biblioteca-tareas-y-presupuesto.md) verificada. [Índice](README.md).
+**Estado:** En curso. **Dependencia:** [fase 02](02-biblioteca-tareas-y-presupuesto.md) verificada. [Índice](README.md). Implementación y verificaciones deterministas registradas en [evidencia de implementación](evidence/phase03-implementation.md); falta aprobar la aceptación con proveedor real.
 
 **Fuente:** [ingesta](../specification/03-ingesta-y-documentos.md), [consultas](../specification/04-consultas-y-evidencia.md) y [conversaciones](../specification/02-usuarios-y-espacios.md#conversaciones-privadas-y-compartidas). **Cobertura:** V03–V11, V15–V17 y V20.
 
@@ -21,13 +21,13 @@ Completar el primer recorrido con datos reales: cargar dos TXT o notas, indexarl
 
 - [x] **03.1 — Notas y extracción.** Crear/editar notas y extraer TXT conservando líneas o identificadores de fragmentos normalizados. Definir tratamiento de encoding y saltos de línea para que extracción y visor coincidan. *(Role B núcleo + dobles; ver [evidence/role-b-phase02-progress.md](evidence/role-b-phase02-progress.md).)*
 - [x] **03.2 — Fragmentos.** Particionar según decisión de fase 00, conservar ubicación de origen aunque cruce límites y asociar cada fragmento a espacio, documento y revisión interna. Una ubicación se calcula a partir del contenido, nunca se pide al modelo. *(Role B)*
-- [x] **03.3 — Indexación.** Generar embeddings (vía caller con presupuesto) y publicar solo resultados completos; reemplazo/eliminación de fragmentos. *(Dobles en tests; IA real pendiente de corrida autorizada.)*
+- [x] **03.3 — Indexación.** Generar embeddings (vía caller con presupuesto) y publicar solo resultados completos; reemplazo/eliminación de fragmentos. *(Pruebas deterministas y sonda real de embedding separada; aceptación integral con proveedor pendiente.)*
 - [x] **03.4 — Recuperación.** Autorizar espacio y documentos seleccionados antes de buscar; no ampliar selección vacía/ajena. *(Role B SQL)*
 - [x] **03.5 — Respuesta.** Afirmaciones ligadas a fragmentos recuperados; IDs/ubicaciones validados; abstención si no es verificable. *(Role B + dobles)*
 - [x] **03.6 — Clasificación.** Etiquetas supported/inferred/uncertain; inferencias con premisas; abstención sin evidencia. *(Role B)*
-- [ ] **03.7 — Conversaciones.** Persistir autor, espacio, mensajes, selección y citas. Privadas por defecto; compartir/descompartir requiere autoría. Lectura compartida requiere membresía vigente; continuación siempre requiere autoría, aunque el lector sea administrador.
-- [ ] **03.8 — Historial seguro.** Usarlo como contexto conversacional, no como evidencia vigente; no reenviar al proveedor extractos de fuentes obsoletas o inaccesibles como respaldo. Conservar mensajes históricos accesibles según permisos y marcar citas reemplazadas/eliminadas.
-- [x] **03.9 — Reutilización.** Prueba CLI BoxLang que invoque ingesta/recuperación/respuesta del núcleo, sin navegador ni llamadas a Next.js. *(Role B: `tests/knowledge-core-cli.bxs`, `tests/knowledge-p03.bxs`; HTTP/A/C pendientes.)*
+- [x] **03.7 — Conversaciones.** Persistir autor, espacio, mensajes, selección y citas. Privadas por defecto; compartir/descompartir requiere autoría. Lectura compartida requiere membresía vigente; continuación siempre requiere autoría, aunque el lector sea administrador. *(Pruebas deterministas backend y proxy; falta aceptación integral.)*
+- [x] **03.8 — Historial seguro.** Usarlo como contexto conversacional, no como evidencia vigente; no reenviar al proveedor extractos de fuentes obsoletas o inaccesibles como respaldo. Conservar mensajes históricos accesibles según permisos y marcar citas reemplazadas/eliminadas. *(Pruebas deterministas de reemplazo/borrado; falta aceptación integral.)*
+- [x] **03.9 — Reutilización.** Prueba CLI BoxLang que invoque ingesta/recuperación/respuesta del núcleo, sin navegador ni llamadas a Next.js. *(Núcleo CLI, worker, HTTP/proxy y pruebas deterministas implementados; la aceptación real sigue pendiente.)*
 
 ## Contratos observables mínimos
 
@@ -43,11 +43,11 @@ Los nombres/campos serializados se fijan con el contrato validado; estas relacio
 
 ## Frontend Next.js: pantallas y comportamiento
 
-- [ ] Crear/editar nota; visores TXT con líneas y notas normalizadas con ubicación estable.
-- [ ] Chat con historial, pregunta de seguimiento y elección explícita de todo el espacio o documentos concretos.
-- [ ] Presentar etiquetas por afirmación, premisas y citas; abrir visor en ubicación exacta y resaltar solo la evidencia asociada.
-- [ ] Conversaciones propias y compartidas según permisos; la compartida de otro autor no permite enviar mensajes.
-- [ ] Fuentes reemplazadas/eliminadas conservan marca histórica y no abren contenido nuevo como si fuera evidencia antigua. Mostrar carga, error y falta de evidencia en ES/EN.
+- [x] Crear/editar nota; visores TXT con líneas y notas normalizadas con ubicación estable. *(Verificado en fixture de navegador.)*
+- [x] Chat con historial, pregunta de seguimiento y elección explícita de todo el espacio o documentos concretos. *(Verificado con fixture y comprobaciones deterministas.)*
+- [x] Presentar etiquetas por afirmación, premisas y citas; abrir visor en ubicación exacta y resaltar solo la evidencia asociada. *(Resaltado Unicode repetido comprobado en ES/EN.)*
+- [x] Conversaciones propias y compartidas según permisos; la compartida de otro autor no permite enviar mensajes. *(Lectura compartida y modo solo lectura comprobados.)*
+- [x] Fuentes reemplazadas/eliminadas conservan marca histórica y no abren contenido nuevo como si fuera evidencia antigua. Mostrar carga, error y falta de evidencia en ES/EN. *(Cita histórica reemplazada comprobada; aceptación completa pendiente.)*
 
 ## Pruebas de cierre
 
@@ -65,8 +65,8 @@ Los nombres/campos serializados se fijan con el contrato validado; estas relacio
 
 ## Entregables y criterio de finalización
 
-- [ ] Pipeline TXT/notas conectado a tareas/presupuesto, contratos de respuesta/cita y conversaciones persistentes.
-- [ ] Chat y dos visores funcionales, pruebas sin IA separadas de evaluación real de proveedor y CLI reutilizable.
+- [x] Pipeline TXT/notas conectado a tareas/presupuesto, contratos de respuesta/cita y conversaciones persistentes. *(Implementado; gate real aún abierto.)*
+- [x] Chat y visores funcionales, pruebas deterministas separadas de evaluación real de proveedor y CLI reutilizable. *(UI/flujo determinista comprobados; falta aceptación real.)*
 - [ ] P03.1–P03.9 aprobadas y regresión de seguridad/ciclo documental. El grafo y los demás formatos siguen pendientes, no se presentan como implementados.
 
 **Siguiente:** [fase 04](04-formatos-y-previsualizadores.md).

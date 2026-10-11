@@ -46,12 +46,23 @@ function run() {
 	var answer = conversations.sendMessage(ownerRequest, conversation.id, "Who approves the request?", {mode:"documents",documentIds:[note.documentId]});
 	if ( answer.assistantMessage.abstained || !answer.assistantMessage.claims.len() || !answer.assistantMessage.citations.len() ) throw(message="Browser fixture did not create a deterministic citation");
 	conversations.setShared(ownerRequest, conversation.id, true);
+	var repeatedText = "La frase repetida es «café 🧠»." & char(10) & repeatString("Archivo neutral de política pública. ", 55) & char(10) & "La frase repetida es «café 🧠». Código de cola: UNIQUETAIL847.";
+	var revised = library.updateNote(ownerRequest, note.documentId, "Browser evidence note", repeatedText, "browser-repeat-#fixtureRun#");
+	if ( worker.processOne(revised.taskId).status != "completed" ) throw(message="Browser repeated Unicode note update failed");
+	var repeatedConversation = conversations.create(ownerRequest, spaceId);
+	var repeatedAnswer = conversations.sendMessage(ownerRequest, repeatedConversation.id, "What repeated phrase is associated with tail marker UNIQUETAIL847?", {mode:"documents",documentIds:[note.documentId]});
+	if ( repeatedAnswer.assistantMessage.abstained || !repeatedAnswer.assistantMessage.citations.len() ) throw(message="Browser repeated Unicode citation was not generated");
+	var repeatedCitation = repeatedAnswer.assistantMessage.citations[1];
+	if ( repeatedCitation.documentId != note.documentId || repeatedCitation.revisionId != revised.versionId || repeatedCitation.location.startOffset <= 0 || repeatedCitation.location.endOffset <= repeatedCitation.location.startOffset ) throw(message="Browser repeated Unicode citation did not retain its exact later-fragment offsets");
+	conversations.setShared(ownerRequest, repeatedConversation.id, true);
 	println(jsonSerialize({
-		status:"OK: synthetic indexed note, deterministic cited conversation and read-only shared fixture created; no network provider calls.",
+		status:"OK: synthetic indexed note, historical replaced citation, repeated Unicode exact-offset citation and shared conversations created; no network provider calls.",
 		run:fixtureRun,
 		space:"Phase 03 browser #fixtureRun#",
 		documentId:note.documentId,
-		conversationId:conversation.id,
+		conversationId:repeatedConversation.id,
+		historicalConversationId:conversation.id,
+		revisionId:revised.versionId,
 		owner:{email:ownerEmail,password:password},
 		reader:{email:readerEmail,password:password}
 	}));

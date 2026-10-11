@@ -247,11 +247,11 @@ h3 { margin: 0 0 8px; color: var(--ink); font: 600 1.19rem/1.4 var(--font-headin
 .content-subtitle { max-width: 640px; margin: 6px 0 0; color: var(--ink-secondary); }
 .content-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 
-.library { display: grid; gap: 16px; }
+.library { display: grid; min-width: 0; gap: 16px; }
 .library > .notice:empty, .library > .upload-results:empty { display: none; }
 .library > .notice { margin: 0; }
 .budget-banner { margin: 0; }
-.library-columns { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
+.library-columns { display: flex; width: 100%; min-width: 0; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
 .library-card { flex: 999 1 520px; min-width: 0; padding: 0; overflow: hidden; }
 .library-toolbar { display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border); }
 .search-field { display: flex; flex: 1 1 220px; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--ink-secondary); }

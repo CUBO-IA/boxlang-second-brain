@@ -62,11 +62,21 @@ assertErrorEnvelope(await request(docsPath, owner, { method: "POST", body: {} })
 
 const list = await request(`/api/spaces/${space.id}/conversations?offset=0&limit=50`, owner);
 assert.equal(list.status, 200);
-const conversation = list.body.conversations.find((item) => item.shared && item.canContinue);
-assert.ok(conversation, "shared author conversation is listed");
-const history = await request(`/api/conversations/${conversation.id}?afterSequence=0&limit=100`, owner);
-assert.equal(history.status, 200);
-const answer = history.body.messages.find((message) => message.role === "assistant");
+let conversation;
+let history;
+let answer;
+for (const item of list.body.conversations.filter((value) => value.shared && value.canContinue)) {
+  const candidate = await request(`/api/conversations/${item.id}?afterSequence=0&limit=100`, owner);
+  assert.equal(candidate.status, 200);
+  const candidateAnswer = candidate.body.messages.find((message) => message.role === "assistant");
+  if (candidateAnswer?.citations?.some((citation) => citation.documentId === note.id && citation.status === "current")) {
+    conversation = item;
+    history = candidate;
+    answer = candidateAnswer;
+    break;
+  }
+}
+assert.ok(conversation, "shared current-citation author conversation is listed");
 assert.ok(answer?.claims?.length && answer.citations?.length, "fixture includes validated claims and persisted citations");
 assert.equal(answer.claims[0].citationIds[0], answer.citations[0].id);
 
@@ -76,6 +86,10 @@ assert.equal(citation.body.citation.status, "current");
 assert.equal(citation.body.source.revisionId, note.version);
 assert.equal(typeof citation.body.citation.location.startOffset, "number");
 assert.equal(typeof citation.body.citation.location.endOffset, "number");
+const codePoints = [...citation.body.source.content];
+assert.equal(codePoints.slice(citation.body.citation.location.startOffset, citation.body.citation.location.endOffset).join("").startsWith(citation.body.citation.excerpt), true);
+assert.equal(citation.body.source.content.match(/«café 🧠»/gu)?.length, 2, "fixture repeats the same Unicode phrase");
+assert.ok(citation.body.citation.location.startOffset > 0, "citation must select a later repeated-phrase fragment by stored offsets");
 
 const readerHistory = await request(`/api/conversations/${conversation.id}`, reader);
 assert.equal(readerHistory.status, 200);
