@@ -39,7 +39,9 @@ La indexación admite TXT, notas y ahora PDF con texto extraíble (hasta 1.000 p
 
 `compose.yaml` no publica puertos del host; `compose.override.yaml` se carga automáticamente para desarrollo local y conserva los mapeos loopback anteriores. Si Coolify invoca Compose con `-f compose.yaml`, el override no se incluye: publica el frontend mediante su puerto interno `3000` y configura el dominio público solo en `frontend` (por ejemplo, `https://brain.example.com:3000` en Domains). El origen que verá el navegador sigue siendo `https://brain.example.com`, sin `:3000`; establece `APP_ORIGIN` exactamente a ese origen HTTPS. No asignes dominios a `boxlang` ni `postgres`: los servicios se comunican por sus nombres internos (`boxlang:8080` y `postgres:5432`).
 
-Los bind mounts del repositorio requieren habilitar **Preserve repository during deployment** en Coolify. Tras corregir la configuración, recarga y vuelve a desplegar el servicio principal. El despliegue remoto no se ha probado.
+Las imágenes incluyen el código, la configuración de BoxLang y el SQL de inicialización de pgvector. `compose.yaml` solo monta volúmenes persistentes; los bind mounts del repositorio quedan en `compose.override.yaml` para desarrollo local. El arranque ya no depende de **Preserve repository during deployment** en Coolify. Recarga la configuración y reconstruye las imágenes al desplegar este cambio; no basta con reiniciar los contenedores. El despliegue remoto no se ha probado.
+
+Tras desplegar, ejecuta `docker compose exec boxlang boxlang backend/migrations/migrate.bxs` y `docker compose exec boxlang boxlang tests/smoke.bxs` desde el directorio del proyecto Compose en el servidor. No elimines los volúmenes existentes.
 
 ## API de fase 01
 

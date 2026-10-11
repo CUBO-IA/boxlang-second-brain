@@ -2,11 +2,22 @@ services:
   frontend:
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend/app:/app/app:ro
+      - ./tests:/tests:ro
 
   boxlang:
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes: &boxlang-volumes
+      - .:/modules/second-brain:ro
+      - ./backend:/app:ro
+
+  worker:
+    volumes: *boxlang-volumes
 
   postgres:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-pgvector.sql:ro

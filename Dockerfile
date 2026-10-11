@@ -10,3 +10,8 @@ RUN sh /tmp/bx-ai-3.5.0-scientific-vectors.sh /root/.boxlang/modules/bx-ai \
     && rm /tmp/bx-ai-3.5.0-scientific-vectors.sh
 
 WORKDIR /modules/second-brain
+COPY box.json ModuleConfig.bx ./
+COPY config/ ./config/
+COPY backend/ ./backend/
+COPY tests/ ./tests/
+COPY backend/ /app/

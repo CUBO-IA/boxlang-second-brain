@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check host-port separation without starting or changing any containers."""
+"""Check production isolation and development mounts without changing containers."""
 
 import json
 import os
@@ -12,6 +12,11 @@ PORTS = {
     "frontend": ("FRONTEND_PORT", "3000", "3000", "13000"),
     "boxlang": ("BACKEND_PORT", "8080", "8080", "18080"),
     "postgres": ("POSTGRES_PORT", "55433", "5432", "15433"),
+}
+BINDS = {
+    "frontend": {"/app/app", "/tests"},
+    "boxlang": {"/modules/second-brain", "/app"},
+    "postgres": {"/docker-entrypoint-initdb.d/01-pgvector.sql"},
 }
 
 
@@ -59,10 +64,15 @@ for service, (_, default_published, target, custom_published) in PORTS.items():
         assert actual[0]["protocol"] == "tcp"
 
     base_service = base["services"][service]
+    assert all(volume["type"] == "volume" for volume in base_service.get("volumes", [])), f"production requires host files for {service}"
     for rendered in (development, custom_development):
         dev_service = rendered["services"][service]
+        volumes = dev_service.get("volumes", [])
+        assert {volume["target"] for volume in volumes if volume["type"] == "bind"} == BINDS[service]
+        assert all(volume["read_only"] for volume in volumes if volume["type"] == "bind")
+        assert [volume for volume in volumes if volume["type"] == "volume"] == base_service.get("volumes", [])
         for key in set(base_service) | set(dev_service):
-            if key != "ports":
+            if key not in {"ports", "volumes"}:
                 assert base_service.get(key) == dev_service.get(key), f"{service}.{key} changed in override"
 
 assert base["services"]["frontend"]["expose"] == ["3000"]
@@ -87,5 +97,9 @@ assert worker["volumes"] == with_worker["services"]["boxlang"]["volumes"]
 assert worker["environment"]["P00_ALLOW_PROVIDER_CALLS"] == "NO"
 assert worker["environment"]["P03_WORKER_CONTINUOUS"] == "YES"
 
-print("PASS: base compose has no published ports; default override publishes only the three loopback mappings.")
-print("PASS: internal URLs, healthchecks, storage, and other service configuration are unchanged.")
+production_worker = compose_config(False, "-f", "compose.yaml", "--profile", "ai")["services"]["worker"]
+assert production_worker["volumes"] == base["services"]["boxlang"]["volumes"]
+assert all(volume["type"] == "volume" for volume in production_worker["volumes"])
+
+print("PASS: production requires no repository bind mounts or published host ports, including the worker.")
+print("PASS: development keeps read-only source mounts, loopback ports, internal URLs, healthchecks, and persistent volumes.")
