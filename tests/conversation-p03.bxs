@@ -143,6 +143,12 @@ try {
 	var adminReadPrivate = conversations.handle("read", {method:"GET",sessionToken:admin.request.sessionToken,conversationId:createdConversation.id});
 	verify(adminReadPrivate.status == 404, "Admin cannot read another author's private conversation");
 	verify(conversations.handle("read", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,limit:101}).status == 400, "Conversation message page limit is bounded");
+	verify(conversations.handle("list", {method:"GET",sessionToken:ownerRequest.sessionToken,spaceId:space,offset:"0"}).status == 200, "Strict conversation offset accepts zero");
+	verify(conversations.handle("read", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,afterSequence:"0"}).status == 200, "Strict message cursor accepts zero");
+	for ( var malformedNumber in ["abc", "1.5", "-1", "1x"] ) {
+		verify(conversations.handle("list", {method:"GET",sessionToken:ownerRequest.sessionToken,spaceId:space,offset:malformedNumber}).status == 400, "Malformed conversation offset rejected: #malformedNumber#");
+		verify(conversations.handle("read", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,afterSequence:malformedNumber}).status == 400, "Malformed message cursor rejected: #malformedNumber#");
+	}
 	var beforeInvalid = provider.getEmbedCalls();
 	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, "bad empty", {mode:"documents",documentIds:[]}), 400), "Empty explicit selection rejected");
 	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, "bad foreign", {mode:"documents",documentIds:[sourceB.documentId]}), 400), "Foreign selection rejected");
@@ -189,11 +195,18 @@ try {
 	verify(adminSend.status == 404, "Admin cannot continue another author's conversation");
 
 	var badReplacement = library.updateNote(ownerRequest, sourceA.documentId, "Approval candidate", "Candidate replacement that must fail without damaging the current version.", "conv-fail-#runId#");
+	new secondBrain.KnowledgeIndex().upsertDocument(sourceA.documentId, space, badReplacement.versionId, "Approval candidate", "text/note");
+	var markerDuringStaging = queryExecute("SELECT revision_id, status FROM knowledge_documents WHERE id = ?", [sourceA.documentId], {returntype:"array"});
+	verify(markerDuringStaging[1].revision_id == sourceA.versionId && markerDuringStaging[1].status == "indexed", "In-flight candidate staging preserves the published marker");
 	provider.setFailNext("error");
 	verify(worker.processOne(badReplacement.taskId).status == "failed", "Synthetic replacement failure remains unpublished");
 	verify(library.getTextContent(ownerRequest, sourceA.documentId).revisionId == sourceA.versionId, "Failed replacement retains current source");
 	var oldStillCurrent = conversations.read(ownerRequest, createdConversation.id, 2, 2);
 	verify(oldStillCurrent.messages[2].citations[1].status == "current", "Failed candidate does not invalidate current historical citations");
+	var failedExplicit = conversations.sendMessage(ownerRequest, createdConversation.id, "What is in the old source secret phrase?", {mode:"documents",documentIds:[sourceA.documentId]});
+	verify(failedExplicit.assistantMessage.citations[1].revisionId == sourceA.versionId && provider.getLastChatPrompt().contains("Old source secret phrase") && !provider.getLastChatPrompt().contains("Candidate replacement"), "Failed replacement keeps the published revision available in explicit scope only");
+	var failedSpace = conversations.sendMessage(ownerRequest, createdConversation.id, "What is in the old source secret phrase in this space?", {mode:"space"});
+	verify(failedSpace.userMessage.scope.mode == "space" && failedSpace.assistantMessage.citations[1].revisionId == sourceA.versionId && provider.getLastChatPrompt().contains("Old source secret phrase") && !provider.getLastChatPrompt().contains("Candidate replacement"), "Failed replacement keeps the published revision available in whole-space scope without candidate evidence");
 
 	var replacement = library.updateNote(ownerRequest, sourceA.documentId, "Approval current", "The approval is now granted by the board secretary. New source only.", "conv-replace-#runId#");
 	verify(worker.processOne(replacement.taskId).status == "completed", "Successful replacement publishes current evidence");

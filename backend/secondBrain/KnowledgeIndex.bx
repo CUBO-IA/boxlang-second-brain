@@ -24,12 +24,7 @@ class {
 			"
 			INSERT INTO knowledge_documents (id, space_id, revision_id, name, media_type, status)
 			VALUES (?, ?, ?, ?, ?, 'staging')
-			ON CONFLICT (id) DO UPDATE SET
-				revision_id = EXCLUDED.revision_id,
-				name = EXCLUDED.name,
-				media_type = EXCLUDED.media_type,
-				status = 'staging',
-				updated_at = CURRENT_TIMESTAMP
+			ON CONFLICT (id) DO NOTHING
 			",
 			[ arguments.documentId, arguments.spaceId, arguments.revisionId, arguments.name, arguments.mediaType ]
 		);

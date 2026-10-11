@@ -132,6 +132,9 @@ try {
 	deletionTask = service.claimTask(deleting.taskId);
 	core.stageText(toString(deletionTask.spaceId), deletionTask.documentId, deletionTask.versionId, deletionTask.name, fileRead(deletionTask.original, "UTF-8"), deletionTask.mediaType, "txt", () => service.heartbeat(deletionTask.id, deletionTask.leaseToken));
 	service.deleteDocument(input, second.documentId);
+	core.getIndex().upsertDocument(second.documentId, input.spaceId, deleting.versionId, "delete.txt", "text/plain");
+	deletedMarker = queryExecute("SELECT revision_id, status FROM knowledge_documents WHERE id = ?", [second.documentId], {returntype: "array"});
+	verify(deletedMarker[1].status == "deleted", "A stale staging marker cannot resurrect a deleted document");
 	lateStageRejected = false;
 	try { core.stageText(toString(deletionTask.spaceId), deletionTask.documentId, deletionTask.versionId, deletionTask.name, "late stale worker", deletionTask.mediaType, "txt"); }
 	catch (any staleWorker) { lateStageRejected = staleWorker.type == "SecondBrain.LeaseLost"; }

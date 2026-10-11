@@ -20,6 +20,10 @@ class {
 		}
 		return true;
 	}
+	private numeric function queryInteger(required any value) {
+		if ( !isText(arguments.value) || reFind("^[0-9]+$", arguments.value) != 1 ) reject(400, "invalid_input");
+		return val(arguments.value);
+	}
 	private struct function safeError(required any error) {
 		if ( arguments.error.type == "SecondBrain.Library" ) return variables.library.safeError(arguments.error);
 		if ( arguments.error.type == "SecondBrain.Conversation" ) {
@@ -364,12 +368,12 @@ class {
 					return {status:201, body:{conversation:create(req, req.spaceId)}};
 				case "list":
 					if ( req.method != "GET" ) reject(405, "method");
-					var offset = structKeyExists(req, "offset") ? val(req.offset) : 0;
+					var offset = structKeyExists(req, "offset") ? queryInteger(req.offset) : 0;
 					var limit = structKeyExists(req, "limit") ? val(req.limit) : 50;
 					return {status:200, body:list(req, req.spaceId, offset, limit)};
 				case "read":
 					if ( req.method != "GET" ) reject(405, "method");
-					return {status:200, body:read(req, req.conversationId, structKeyExists(req,"afterSequence") ? val(req.afterSequence) : 0, structKeyExists(req,"limit") ? val(req.limit) : 100)};
+					return {status:200, body:read(req, req.conversationId, structKeyExists(req,"afterSequence") ? queryInteger(req.afterSequence) : 0, structKeyExists(req,"limit") ? val(req.limit) : 100)};
 				case "sendMessage":
 					if ( req.method != "POST" || !hasOnly(req.body, ["question","scope"]) || !structKeyExists(req.body,"question") || !structKeyExists(req.body,"scope") ) reject(req.method != "POST" ? 405 : 400, req.method != "POST" ? "method" : "invalid_input");
 					var sent = sendMessage(req, req.conversationId, req.body.question, req.body.scope);
