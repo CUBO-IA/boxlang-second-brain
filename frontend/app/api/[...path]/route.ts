@@ -10,13 +10,14 @@ const multipartOverheadBytes = 1_000_000;
 const uploadBodyLimit = maxFilesPerUpload * maxFileBytes + multipartOverheadBytes;
 const replaceBodyLimit = maxFileBytes + multipartOverheadBytes;
 
-const idPattern = /^[1-9][0-9]{0,17}$/;
+const idPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 
 type Operation = {
   op: string;
   spaceId?: string;
   memberId?: string;
   documentId?: string;
+  taskId?: string;
   endpoint?: "library";
   // Multipart operations carry the cap applied to their streamed body.
   streamLimit?: number;
@@ -56,6 +57,9 @@ function resolveOperation(pathname: string, method: string): Operation | null {
     if (method === "DELETE") return { op: "removeMember", spaceId, memberId: parts[3] };
   }
   if (parts[2] === "documents") return resolveLibraryOperation(parts.slice(3), method, spaceId);
+  if (parts.length === 5 && parts[2] === "tasks" && idPattern.test(parts[3]) && parts[4] === "retry" && method === "POST") {
+    return { endpoint: "library", op: "retry", spaceId, taskId: parts[3] };
+  }
   return null;
 }
 
@@ -63,21 +67,20 @@ function resolveLibraryOperation(parts: string[], method: string, spaceId: strin
   const library = { endpoint: "library" as const, spaceId };
   if (parts.length === 0) {
     if (method === "GET") return { ...library, op: "documents" };
-    if (method === "POST") return { ...library, op: "uploadDocuments", streamLimit: uploadBodyLimit };
+    if (method === "POST") return { ...library, op: "upload", streamLimit: uploadBodyLimit };
     return null;
   }
 
   const documentId = parts[0];
   if (!idPattern.test(documentId)) return null;
   if (parts.length === 1) {
-    return method === "DELETE" ? { ...library, op: "deleteDocument", documentId } : null;
+    return method === "DELETE" ? { ...library, op: "delete", documentId } : null;
   }
   if (parts.length !== 2) return null;
-  if (parts[1] === "content" && method === "PUT") {
-    return { ...library, op: "replaceDocument", documentId, streamLimit: replaceBodyLimit };
+  if (parts[1] === "content" && method === "POST") {
+    return { ...library, op: "upload", documentId, streamLimit: replaceBodyLimit };
   }
-  if (parts[1] === "retry" && method === "POST") return { ...library, op: "retryDocument", documentId };
-  if (parts[1] === "original" && method === "GET") return { ...library, op: "originalDocument", documentId, download: true };
+  if (parts[1] === "original" && method === "GET") return { ...library, op: "original", documentId, download: true };
   return null;
 }
 
@@ -153,6 +156,7 @@ async function delegate(request: Request): Promise<Response> {
   if (route.spaceId) backend.searchParams.set("spaceId", route.spaceId);
   if (route.memberId) backend.searchParams.set("memberId", route.memberId);
   if (route.documentId) backend.searchParams.set("documentId", route.documentId);
+  if (route.taskId) backend.searchParams.set("taskId", route.taskId);
 
   const headers = new Headers();
   const contentType = request.headers.get("content-type");

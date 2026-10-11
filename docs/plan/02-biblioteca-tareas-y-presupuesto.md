@@ -1,6 +1,6 @@
 # Fase 02 — Biblioteca, tareas y presupuesto
 
-**Estado:** En curso. Rol A: 02.1–02.6 implementadas y comprobadas sin IA; presupuesto B, interfaz C e integración pendientes. No es cierre de fase. [Informe A](evidence/phase02-platform-security.md). **Dependencia:** [fase 01](01-cuentas-espacios-y-permisos.md) verificada. [Índice](README.md).
+**Estado:** En curso. A (02.1–02.6) y C integrados y comprobados con BoxLang real sin IA; presupuesto B pendiente de integración/verificación. No es cierre de fase. [Informe A](evidence/phase02-platform-security.md), [integración](evidence/phase02-merge.md). **Dependencia:** [fase 01](01-cuentas-espacios-y-permisos.md) verificada. [Índice](README.md).
 
 **Fuente:** [ingesta](../specification/03-ingesta-y-documentos.md), [arquitectura](../specification/06-arquitectura-y-seguridad.md) y [operación](../specification/07-operacion-y-limites.md). **Cobertura:** V03, V05–V08, V16–V18.
 

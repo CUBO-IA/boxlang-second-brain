@@ -48,7 +48,7 @@ const sourceKey = {
 } as const satisfies Record<LibraryDocument["source"], string>;
 
 type CategoryKey = typeof categoryKey[LibraryErrorCategory];
-type NoticeKey = CategoryKey | "libraryNotFound" | "rateLimited" | "uploadTooMany" | "documentReplaced" | "documentRetried" | "documentDeleted";
+type NoticeKey = CategoryKey | "libraryNotFound" | "rateLimited" | "uploadTooMany" | "documentReplaced" | "documentRetried" | "documentDeleted" | "documentDeleting";
 type LoadError = "" | "libraryPermission" | "libraryLoadError";
 
 function isCategory(value: string): value is LibraryErrorCategory {
@@ -275,7 +275,7 @@ export function LibraryPanel({
 
   function retry(target: LibraryDocument) {
     void mutate(`retry-${target.id}`, true, async () => {
-      await retryDocument(spaceId, target.id, csrfToken);
+      await retryDocument(spaceId, target.attempt.taskId, csrfToken);
       return "documentRetried";
     });
   }
@@ -283,9 +283,9 @@ export function LibraryPanel({
   function remove(target: LibraryDocument) {
     if (busy || !window.confirm(t.confirmDeleteDocument(target.name))) return;
     void mutate(`delete-${target.id}`, true, async () => {
-      await deleteDocument(spaceId, target.id, csrfToken);
+      const result = await deleteDocument(spaceId, target.id, csrfToken);
       setLibrary((current) => current && { ...current, documents: current.documents.filter((item) => item.id !== target.id) });
-      return "documentDeleted";
+      return result.status === "deleted" ? "documentDeleted" : "documentDeleting";
     });
   }
 
@@ -300,7 +300,7 @@ export function LibraryPanel({
 
   return (
     <section className="library" aria-label={t.libraryTitle} aria-busy={busy !== "" || (!library && !loadError)}>
-      {library?.budget.exhausted && (
+      {library?.budget?.exhausted && (
         <p className="budget-banner" role="status">
           <BudgetIcon />
           <span><strong>{t.budgetExhaustedTitle}</strong> {t.budgetExhausted}</span>

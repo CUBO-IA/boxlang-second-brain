@@ -1,6 +1,6 @@
 # Second Brain
 
-**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y almacenamiento privado/tareas de biblioteca (rol A, fase 02). Frontend Next.js con delegación same-origin de cuentas. La biblioteca aún no tiene UI ni pipeline de ingesta/IA: guardar originales no los hace disponibles para consultas.
+**Equipo: Out of the Box.** Módulo reutilizable Pure BoxLang para cuentas, espacios, sesiones, permisos y almacenamiento privado/tareas de biblioteca (fase 02). Frontend Next.js con biblioteca y delegación same-origin a BoxLang. Todavía no hay pipeline de ingesta/IA conectado a la biblioteca: guardar originales no los hace disponibles para consultas.
 
 ## Entorno
 
@@ -101,7 +101,7 @@ Ingesta multiformato, recuperación con evidencia, contradicciones, separación 
 
 ## Fase 02 — plataforma y seguridad (A)
 
-Migración 2 y volumen privado `originals_data`; API BoxLang de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. **Fase En curso:** faltan presupuesto de B, frontend de C y su integración; no se ejecuta ingesta ni IA.
+Migración 2 y volumen privado `originals_data`; API BoxLang y UI Next.js de carga por archivo/lote, listado, descarga autorizada, tareas/reintentos, reemplazo y borrado recuperable. Conserva la última revisión publicada y rechaza tareas obsoletas. **Fase En curso:** A+C integrados; falta integrar y validar presupuesto B. No se ejecuta ingesta ni IA. [Evidencia de integración](docs/plan/evidence/phase02-merge.md).
 
 ```sh
 docker compose up -d --no-deps --wait boxlang
