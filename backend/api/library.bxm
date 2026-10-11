@@ -21,7 +21,7 @@
         taskId: structKeyExists(url, "taskId") ? toString(url.taskId) : ""
     };
     operation = structKeyExists(url, "op") ? toString(url.op) : "";
-    library = new secondBrain.LibraryService();
+    library = new secondBrain.LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId));
     if ( operation == "upload" ) {
         try {
             if ( input.method != "POST" ) throw(type="SecondBrain.Library", message="method", errorCode="405");

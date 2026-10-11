@@ -10,12 +10,13 @@ class {
 		return { text: text, encoding: "utf-8", newline: "lf" };
 	}
 
-	array function lines(required string raw) {
+	array function lines(required string raw, any heartbeat="") {
 		var normalized = normalizeText(arguments.raw);
 		var parts = listToArray(normalized.text, char(10), true, true);
 		if ( !len(normalized.text) ) parts = [ "" ];
 		var output = [];
 		for ( var i = 1; i <= parts.len(); i++ ) {
+			if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
 			output.append({
 				line: i,
 				fragmentId: "L" & numberFormat(i, "000000"),
@@ -25,9 +26,9 @@ class {
 		return output;
 	}
 
-	struct function extract(required string raw, required string documentId, required string revisionId, required string spaceId, string kind="txt") {
+	struct function extract(required string raw, required string documentId, required string revisionId, required string spaceId, string kind="txt", any heartbeat="") {
 		var normalized = normalizeText(arguments.raw);
-		var lineRows = lines(arguments.raw);
+		var lineRows = lines(arguments.raw, arguments.heartbeat);
 		return {
 			spaceId: arguments.spaceId,
 			documentId: arguments.documentId,

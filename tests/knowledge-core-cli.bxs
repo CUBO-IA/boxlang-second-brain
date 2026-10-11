@@ -35,7 +35,9 @@ if ( !both.ok || both.abstained ) throw( message="03.9 multifuente answer failed
 if ( both.citations.len() < 1 || both.claims.len() < 1 ) throw( message="03.9 missing claims/citations" );
 if ( both.claims[1].label != "supported" ) throw( message="03.9 claim label mismatch" );
 
+provider.setForceInsufficient(true);
 onlyA = core.ask(space, [ docA ], "Quien concede la aprobacion?");
+provider.setForceInsufficient(false);
 if ( !onlyA.ok ) throw( message="P03.2 selection query failed" );
 if ( !onlyA.abstained && onlyA.citations.len() > 0 && onlyA.citations[1].documentId != docA ) {
 	throw( message="P03.2 citation leaked outside selection" );

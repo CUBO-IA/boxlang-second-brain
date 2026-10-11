@@ -1,3 +1,3 @@
 // Restart/maintenance without AI. B's worker also calls recover before claiming tasks.
-new secondBrain.LibraryService().recover();
+new secondBrain.LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId)).recover();
 println("OK: originals reconciled, expired leases fenced and pending deletions retried.");

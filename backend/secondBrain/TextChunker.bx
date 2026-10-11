@@ -28,12 +28,14 @@ class {
 		return javaString.substring(startIndex, endIndex);
 	}
 
-	private struct function locationForSlice(required array lines, required string slice) {
+	private struct function locationForSlice(required array lines, required string slice, any heartbeat="") {
 		var startLine = 1;
 		var endLine = arguments.lines.len();
 		if ( len(trim(arguments.slice)) ) {
 			var first = left(trim(arguments.slice), min(40, len(trim(arguments.slice))));
-			for ( var row in arguments.lines ) {
+			for ( var i = 1; i <= arguments.lines.len(); i++ ) {
+				if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
+				var row = arguments.lines[i];
 				if ( find(first, row.text) || find(row.text, arguments.slice) ) {
 					startLine = row.line;
 					break;
@@ -41,6 +43,7 @@ class {
 			}
 			var last = right(trim(arguments.slice), min(40, len(trim(arguments.slice))));
 			for ( var i = arguments.lines.len(); i >= 1; i-- ) {
+				if ( i mod 100 == 0 && isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
 				var candidate = arguments.lines[i];
 				if ( find(last, candidate.text) || find(candidate.text, arguments.slice) ) {
 					endLine = candidate.line;
@@ -57,7 +60,7 @@ class {
 		};
 	}
 
-	array function chunkExtracted(required struct extracted) {
+	array function chunkExtracted(required struct extracted, any heartbeat="") {
 		var text = arguments.extracted.text ?: "";
 		var lines = arguments.extracted.lines ?: [];
 		var total = codePointLen(text);
@@ -75,9 +78,10 @@ class {
 		var offset = 0;
 		var index = 1;
 		while ( offset < total ) {
+			if ( isCustomFunction(arguments.heartbeat) && !arguments.heartbeat() ) throw(type="SecondBrain.LeaseLost", message="Task lease lost");
 			if ( index > variables.maxFragments ) throw( message="Document exceeds #variables.maxFragments# fragments" );
 			var slice = substringCodePoints(text, offset, variables.maxCodePoints);
-			var location = locationForSlice(lines, slice);
+			var location = locationForSlice(lines, slice, arguments.heartbeat);
 			fragments.append({
 				fragmentIndex: index,
 				text: slice,

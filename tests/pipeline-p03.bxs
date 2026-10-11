@@ -1,0 +1,144 @@
+// Small deterministic library → extraction → budgeted embeddings → fenced publish check.
+import secondBrain.KnowledgeCore;
+import secondBrain.LibraryService;
+import secondBrain.LibraryTaskWorker;
+import secondBrain.ProviderDouble;
+
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="Use isolated Compose with P02_ISOLATED_DATABASE=YES");
+function verify(required boolean condition, required string message) { if ( !arguments.condition ) throw(message=arguments.message); }
+
+runId = lCase(left(replace(createUUID(), "-", "", "all"), 12));
+email = "pipeline-#runId#@example.invalid";
+accounts = new secondBrain.AccountService();
+input = {method: "POST", body: {email: email, password: "synthetic-pipeline-password"}, origin: getSystemSetting("APP_ORIGIN"), csrfToken: "", sessionToken: "", spaceId: ""};
+verify(accounts.handle("register", input).status == 202, "Synthetic account registration");
+login = accounts.handle("login", input);
+verify(login.status == 200, "Synthetic account login");
+input.sessionToken = listFirst(listLast(listFirst(login.setCookie, ";"), "="), ";");
+input.csrfToken = login.body.csrfToken;
+input.body = {name: "Pipeline test"};
+createdSpace = accounts.handle("createSpace", input);
+verify(createdSpace.status == 201, "Synthetic space creation");
+input.spaceId = toString(createdSpace.body.space.id);
+
+service = new LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId));
+provider = new ProviderDouble();
+core = new KnowledgeCore(provider);
+worker = new LibraryTaskWorker(provider, service);
+temp = service.uploadDirectory();
+documentIds = [];
+try {
+	queryExecute("INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), 20) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = GREATEST(budget_days.limit_usd, EXCLUDED.limit_usd)", [core.getBudget().snapshot().dayUtc]);
+
+	fileWrite(temp & "/one.txt", "Línea uno" & char(13) & char(10) & "Línea dos", "UTF-8");
+	first = service.acceptFile(input, temp & "/one.txt", "one.txt", "one-#runId#");
+	fileWrite(temp & "/two.txt", "A separate source about the second topic.", "UTF-8");
+	second = service.acceptFile(input, temp & "/two.txt", "two.txt", "two-#runId#");
+	note = service.createNote(input, "Nota acentuada", "Primera línea" & char(13) & char(10) & "Segunda línea ñ.", "note-#runId#");
+	documentIds = [first.documentId, second.documentId, note.documentId];
+	for ( task in [first, second, note] ) verify(worker.processOne(task.taskId).status == "completed", "Durable task publishes real extracted embeddings");
+	fileWrite(temp & "/later.md", "Unsupported later-phase format.", "UTF-8");
+	laterFormat = service.acceptFile(input, temp & "/later.md", "later.md", "later-#runId#");
+	documentIds.append(laterFormat.documentId);
+	laterResult = worker.processOne(laterFormat.taskId);
+	verify(laterResult.status == "failed" && laterResult.category == "unsupported_format" && core.getIndex().fragmentCount(laterFormat.documentId, laterFormat.versionId) == 0, "Later formats fail safely without pretending to be indexed");
+	noteUpdate = service.updateNote(input, note.documentId, "Nota revisada", "Texto actualizado", "note-update-#runId#");
+	verify(worker.processOne(noteUpdate.taskId).status == "completed", "Note update reuses the durable version/task pipeline");
+
+	content = service.getTextContent(input, first.documentId);
+	verify(content.revisionId == first.versionId && content.content == "Línea uno#char(10)#Línea dos" && content.lines.len() == 2, "TXT strict UTF-8 and normalized newlines with stable lines: #jsonSerialize(content)#");
+	noteContent = service.getTextContent(input, note.documentId);
+	verify(noteContent.kind == "note" && noteContent.revisionId == noteUpdate.versionId && noteContent.title == "Nota revisada" && noteContent.content == "Texto actualizado", "Note source metadata and normalized current content");
+	listing = service.listDocuments(input);
+	noteListed = listing.filter((row) => row.id == note.documentId)[1];
+	verify(noteListed.source == "note" && noteListed.metadata.provenance.kind == "note", "Note provenance persisted on the normal library version");
+	answer = core.ask(input.spaceId, [first.documentId, second.documentId, note.documentId], "¿Qué contienen las fuentes?");
+	citationSource = queryExecute("SELECT d.current_version::TEXT AS current_version, f.revision_id, v.provenance->>'kind' AS kind FROM knowledge_fragments f JOIN documents d ON d.id::TEXT = f.document_id JOIN document_versions v ON v.id::TEXT = f.revision_id WHERE f.id = ? AND d.deleted_at IS NULL", [answer.citations[1].fragmentId], {returntype: "array"});
+	verify(answer.ok && !answer.abstained && answer.citations.len() > 0 && citationSource.len() == 1 && citationSource[1].current_version == answer.citations[1].revisionId && citationSource[1].revision_id == answer.citations[1].revisionId && answer.citations[1].provenance.kind == citationSource[1].kind, "Structured answer cites retrieved current revision metadata");
+
+	badUtf8 = temp & "/bad.txt";
+	fileWrite(badUtf8, binaryDecode("ff", "hex"));
+	utf8Rejected = false;
+	try { service.acceptFile(input, badUtf8, "bad.txt", "bad-#runId#"); }
+	catch (any invalidUtf8) { utf8Rejected = invalidUtf8.type == "SecondBrain.Library" && toNumeric(invalidUtf8.errorCode) == 415; }
+	verify(utf8Rejected, "Invalid UTF-8 never enters originals or the index");
+
+	// A provider error after one chunk leaves the prior published version available.
+	pieces = [];
+	for ( i = 1; i <= 80; i++ ) pieces.append("candidate revision line #i# includes enough UTF-8 source material.\n");
+	fileWrite(temp & "/replacement.txt", pieces.toList(""), "UTF-8");
+	replacement = service.acceptFile(input, temp & "/replacement.txt", "replacement.txt", "replacement-#runId#", first.documentId);
+	provider.setFailAfterEmbeds(1);
+	beforeEmbeds = provider.getEmbedCalls();
+	failed = worker.processOne(replacement.taskId);
+	verify(failed.status == "failed", "Partial embedding failure is task failure, not publication");
+	verify(service.listDocuments(input).filter((row) => row.id == first.documentId)[1].version == first.versionId, "Old current revision remains available after candidate failure");
+	partial = queryExecute("SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded FROM knowledge_fragments WHERE document_id = ? AND revision_id = ?", [first.documentId, replacement.versionId], {returntype: "array"});
+	verify(partial[1].total > 1 && partial[1].embedded == 1, "Candidate revision is staged independently with one completed embedding");
+	failedEmbedCalls = provider.getEmbedCalls();
+	queryExecute("UPDATE document_tasks SET next_attempt_at = CURRENT_TIMESTAMP WHERE id = CAST(? AS UUID)", [replacement.taskId]);
+	verify(worker.processOne(replacement.taskId).status == "completed", "Retry resumes missing embeddings and publishes atomically");
+	afterEmbeds = provider.getEmbedCalls();
+	verify(afterEmbeds - failedEmbedCalls == partial[1].total - partial[1].embedded, "Retry embeds only missing chunks, not the already embedded chunk");
+	retried = queryExecute("SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE embedding IS NULL) AS missing FROM knowledge_fragments WHERE document_id = ? AND revision_id = ?", [first.documentId, replacement.versionId], {returntype: "array"});
+	verify(retried[1].total == partial[1].total && retried[1].missing == 0, "Retry is idempotent without duplicate fragments");
+	verify(service.getTextContent(input, first.documentId).revisionId == replacement.versionId, "Published replacement becomes the viewer revision");
+
+	// Obsolete lease/candidate and deletion fences are checked against real indexed fragments.
+	fileWrite(temp & "/stale.txt", "Candidate that loses its lease.", "UTF-8");
+	stale = service.acceptFile(input, temp & "/stale.txt", "stale.txt", "stale-#runId#", second.documentId);
+	staleTask = service.claimTask(stale.taskId);
+	staleText = fileRead(staleTask.original, "UTF-8");
+	core.stageText(toString(staleTask.spaceId), staleTask.documentId, staleTask.versionId, staleTask.name, staleText, staleTask.mediaType, "txt", () => service.heartbeat(staleTask.id, staleTask.leaseToken));
+	fileWrite(temp & "/newest.txt", "Newest current candidate.", "UTF-8");
+	newest = service.acceptFile(input, temp & "/newest.txt", "newest.txt", "newest-#runId#", second.documentId);
+	staleCallback = service.publishTask(staleTask.id, staleTask.leaseToken, (documentId, revisionId, previous) => core.getIndex().publishRevision(documentId, revisionId));
+	verify(!staleCallback && service.listDocuments(input).filter((row) => row.id == second.documentId)[1].version == second.versionId, "Superseded candidate cannot publish");
+	newestTask = service.claimTask(newest.taskId);
+	queryExecute("UPDATE document_tasks SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = CAST(? AS UUID)", [newestTask.id]);
+	verify(!service.publishTask(newestTask.id, newestTask.leaseToken, (documentId, revisionId, previous) => core.getIndex().publishRevision(documentId, revisionId)), "Expired lease cannot publish");
+
+	fileWrite(temp & "/delete-candidate.txt", "Evidence being deleted.", "UTF-8");
+	deleting = service.acceptFile(input, temp & "/delete-candidate.txt", "delete.txt", "delete-#runId#", second.documentId);
+	deletionTask = service.claimTask(deleting.taskId);
+	core.stageText(toString(deletionTask.spaceId), deletionTask.documentId, deletionTask.versionId, deletionTask.name, fileRead(deletionTask.original, "UTF-8"), deletionTask.mediaType, "txt", () => service.heartbeat(deletionTask.id, deletionTask.leaseToken));
+	service.deleteDocument(input, second.documentId);
+	lateStageRejected = false;
+	try { core.stageText(toString(deletionTask.spaceId), deletionTask.documentId, deletionTask.versionId, deletionTask.name, "late stale worker", deletionTask.mediaType, "txt"); }
+	catch (any staleWorker) { lateStageRejected = staleWorker.type == "SecondBrain.LeaseLost"; }
+	deletedFragments = queryExecute("SELECT COUNT(*) AS total FROM knowledge_fragments WHERE document_id = ?", [second.documentId], {returntype: "array"});
+	verify(lateStageRejected && deletedFragments[1].total == 0, "Deletion cleanup removes all derived evidence and stale workers cannot recreate it");
+	verify(!service.publishTask(deletionTask.id, deletionTask.leaseToken, (documentId, revisionId, previous) => core.getIndex().publishRevision(documentId, revisionId)), "Deleted task cannot publish");
+	verify(core.ask(input.spaceId, [second.documentId], "question").abstained, "Deleted source is ineligible before cleanup retry");
+
+	invalidCitation = core.getAnswers().tryBuildFromRetrieved("x", [{id: "f1", documentId: "d1", revisionId: "r1", text: "t", location: {kind: "lines", lineStart: 1, lineEnd: 1}}], [{text: "bad", label: "supported", supportFragmentIds: ["missing"]}]);
+	missingPremise = core.getAnswers().tryBuildFromRetrieved("x", [{id: "f1", documentId: "d1", revisionId: "r1", text: "t", location: {kind: "lines", lineStart: 1, lineEnd: 1}}], [{text: "inference", label: "inferred", supportFragmentIds: ["f1"], premises: []}]);
+	invalidLabel = core.getAnswers().tryBuildFromRetrieved("x", [{id: "f1", documentId: "d1", revisionId: "r1", text: "t", location: {kind: "lines", lineStart: 1, lineEnd: 1}}], [{text: "bad label", label: "guess", supportFragmentIds: ["f1"]}]);
+	verify(!invalidCitation.ok && !missingPremise.ok && !invalidLabel.ok, "Invalid citations, labels, and premise-free inferences are rejected");
+	provider.setNextChatContent('{"claims":[]}');
+	emptyClaims = core.ask(input.spaceId, [note.documentId], "question with evidence");
+	verify(emptyClaims.abstained && emptyClaims.reason == "no_verifiable_claims", "Empty structured claims abstain safely");
+	provider.setNextChatContent("not JSON");
+	invalidJson = core.ask(input.spaceId, [note.documentId], "question with evidence");
+	verify((invalidJson.abstained ?: false) && invalidJson.reason == "invalid_model_output", "Malformed structured model response abstains safely: #jsonSerialize(invalidJson)#");
+	provider.setForceInsufficient(true);
+	absent = core.ask(input.spaceId, [note.documentId], "unsupported absent question");
+	provider.setForceInsufficient(false);
+	verify(absent.abstained, "Explicit model abstention is preserved");
+	defaultRejected = false;
+	try { new KnowledgeCore(); } catch (any noProvider) { defaultRejected = findNoCase("P00_ALLOW_PROVIDER_CALLS=YES", noProvider.message) > 0; }
+	verify(defaultRejected, "Production core never silently defaults to ProviderDouble");
+	println("OK: durable notes/TXT pipeline; normalized UTF-8; partial/retry staging; lease/candidate/delete fences; structured validation; provider default");
+} finally {
+	for ( documentId in documentIds ) {
+		try { service.deleteDocument(input, documentId); } catch (any ignoredCleanup) { }
+	}
+	queryExecute("UPDATE documents SET current_version = NULL, candidate_version = NULL WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+	queryExecute("DELETE FROM document_tasks WHERE document_id IN (SELECT id FROM documents WHERE space_id = CAST(? AS BIGINT))", [input.spaceId]);
+	queryExecute("DELETE FROM document_versions WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+	queryExecute("DELETE FROM documents WHERE space_id = CAST(? AS BIGINT)", [input.spaceId]);
+	queryExecute("DELETE FROM spaces WHERE id = CAST(? AS BIGINT)", [input.spaceId]);
+	queryExecute("DELETE FROM accounts WHERE email = ?", [email]);
+	queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [lCase(hash(email, "SHA-256"))]);
+	if ( directoryExists(temp) ) directoryDelete(temp, true);
+}

@@ -7,17 +7,21 @@ class {
 	property name="chatCalls" type="numeric" default=0;
 	property name="embedCalls" type="numeric" default=0;
 	property name="failNext" type="string" default="";
+	property name="failEmbedAt" type="numeric" default=0;
 	property name="lastChatPrompt" type="string" default="";
 	property name="lastEmbedText" type="string" default="";
 	property name="forceInsufficient" type="boolean" default=false;
+	property name="nextChatContent" type="string" default="";
 
 	function init() {
 		variables.chatCalls = 0;
 		variables.embedCalls = 0;
 		variables.failNext = "";
+		variables.failEmbedAt = 0;
 		variables.lastChatPrompt = "";
 		variables.lastEmbedText = "";
 		variables.forceInsufficient = false;
+		variables.nextChatContent = "";
 		return this;
 	}
 
@@ -25,9 +29,15 @@ class {
 		variables.failNext = arguments.mode;
 	}
 
+	void function setFailAfterEmbeds(required numeric successfulCalls) {
+		variables.failEmbedAt = variables.embedCalls + arguments.successfulCalls + 1;
+	}
+
 	void function setForceInsufficient(required boolean value) {
 		variables.forceInsufficient = arguments.value;
 	}
+
+	void function setNextChatContent(required string content) { variables.nextChatContent = arguments.content; }
 
 	numeric function getChatCalls() { return variables.chatCalls; }
 	numeric function getEmbedCalls() { return variables.embedCalls; }
@@ -97,9 +107,13 @@ class {
 		}
 		variables.chatCalls++;
 		variables.lastChatPrompt = arguments.prompt;
-		// Do not scan the full prompt: KnowledgeCore's real-AI instruction
-		// mentions the abstain token, which must not trigger the double.
-		var content = variables.forceInsufficient ? "INSUFFICIENT_EVIDENCE" : "DOUBLE_ANSWER";
+		var marker = "Retrieved fragment IDs: ";
+		var markerAt = find(marker, arguments.prompt);
+		var ids = markerAt ? trim(mid(arguments.prompt, markerAt + len(marker), len(arguments.prompt))) : "";
+		var content = variables.nextChatContent;
+		if ( len(content) ) variables.nextChatContent = "";
+		else if ( variables.forceInsufficient || !len(ids) ) content = "INSUFFICIENT_EVIDENCE";
+		else content = jsonSerialize({ claims: [ { text: "Deterministic test claim.", label: "supported", supportFragmentIds: [ listFirst(ids, ",") ], premises: [] } ] });
 		return {
 			model: arguments.model,
 			choices: [ {
@@ -111,6 +125,10 @@ class {
 	}
 
 	struct function embed(required string text, required string model) {
+		if ( variables.failEmbedAt > 0 && variables.embedCalls + 1 == variables.failEmbedAt ) {
+			variables.failEmbedAt = 0;
+			throw(message="Simulated provider error after partial embedding");
+		}
 		if ( variables.failNext == "timeout" ) {
 			variables.failNext = "";
 			throw( type="ProviderTimeout", message="Simulated provider timeout" );

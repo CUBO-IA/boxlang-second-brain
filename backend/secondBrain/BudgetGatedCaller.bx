@@ -17,6 +17,12 @@ class {
 		return isInstanceOf(arguments.value, "java.lang.Number") && createObject("java", "java.lang.Double").isFinite(arguments.value.doubleValue()) && arguments.value >= 0 && arguments.value <= 2147483647 && fix(arguments.value) == arguments.value;
 	}
 
+	private boolean function validVector(required any vector) {
+		if ( !isArray(arguments.vector) || arguments.vector.len() != 1536 ) return false;
+		for ( var value in arguments.vector ) if ( !isInstanceOf(value, "java.lang.Number") || !createObject("java", "java.lang.Double").isFinite(value.doubleValue()) ) return false;
+		return true;
+	}
+
 	struct function chat(required string prompt, required string model, numeric estimatedPromptTokens=32, numeric estimatedCompletionTokens=32) {
 		// UTF-8 bytes bound tokenizer input; 64 tokens cover the single-message envelope.
 		var inputBytes = len(charsetDecode(arguments.prompt, "UTF-8"));
@@ -92,6 +98,9 @@ class {
 			var promptTokens = usage.prompt_tokens;
 			var actual = variables.budget.estimateEmbedUSD(promptTokens);
 			var settled = variables.budget.settle(reservation.reservationId, actual, promptTokens, 0, promptTokens, "success");
+			var vector = [];
+			try { vector = response.data[1].embedding; } catch (any malformedVector) { }
+			if ( !validVector(vector) ) return {ok: false, denied: false, providerCalled: true, reason: "provider_invalid_embedding", reservationId: reservation.reservationId, actualUSD: actual};
 			return {
 				ok: settled.ok,
 				reason: settled.reason,
@@ -101,7 +110,7 @@ class {
 				reservation: reservation,
 				settlement: settled,
 				actualUSD: actual,
-				vector: response.data[1].embedding
+				vector: vector
 			};
 		} catch ( any failure ) {
 			var typeName = failure.type ?: "";

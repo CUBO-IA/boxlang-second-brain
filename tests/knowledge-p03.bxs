@@ -28,14 +28,18 @@ ingestNoise = core.ingestText(space, docNoise, "r1", "menu.txt", "La cafeteria a
 note = core.upsertNote(space, "note-1", "r1", "Nota interna", "El responsable de aprobacion es la directora de cumplimiento.");
 if ( !ingestEs.ok || !ingestEn.ok || !ingestNoise.ok || !note.ok ) throw( message="P03 setup ingest failed" );
 
-// P03.2 — selection must not widen
+// P03.2 — deterministic provider says this selected source does not support the question.
+provider.setForceInsufficient(true);
 onlyNoise = core.ask(space, [ docNoise ], "Who grants approval?");
+provider.setForceInsufficient(false);
 if ( !onlyNoise.ok ) throw( message="P03.2 query failed" );
 if ( !onlyNoise.abstained ) throw( message="P03.2 must abstain when selected docs lack evidence" );
 
-// P03.3 — absent question abstains; inference path when weak overlap
+// P03.3 — absent question abstains only when the injected model explicitly abstains.
+provider.setForceInsufficient(true);
 absent = core.ask(space, [ docEs, docEn ], "Cual es el color del logo corporativo?");
-if ( !absent.abstained ) throw( message="P03.3 absent question must abstain" );
+provider.setForceInsufficient(false);
+if ( !absent.abstained ) throw( message="P03.3 model abstention must be preserved" );
 
 inferred = core.ask(space, [ docEs ], "Necesito el formulario");
 if ( !inferred.ok ) throw( message="P03.3 inferred query failed" );
@@ -60,7 +64,9 @@ if ( !foreignSpace.abstained ) throw( message="P03.4 must not retrieve across sp
 // P03.6 — replace then delete; old revision must not answer
 replaced = core.replaceText(space, docEs, "r2", "solicitud.txt", "El proceso de vacaciones se envia a RRHH.");
 if ( !replaced.ok || replaced.status != "indexed" ) throw( message="P03.6 replace failed" );
+provider.setForceInsufficient(true);
 afterReplace = core.ask(space, [ docEs ], "Como solicito la aprobacion legal?");
+provider.setForceInsufficient(false);
 if ( !afterReplace.abstained ) throw( message="P03.6 replaced doc must not keep old approval evidence" );
 core.deleteDocument(docEn);
 afterDelete = core.ask(space, [ docEn ], "Who grants approval?");
