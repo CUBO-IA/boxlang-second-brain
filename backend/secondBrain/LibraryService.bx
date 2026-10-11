@@ -142,7 +142,9 @@ class {
 		access(arguments.request, true);
 		if ( !isInstanceOf(arguments.title, "java.lang.String") || !len(trim(arguments.title)) || len(arguments.title) > 255 || reFind('[\\/\x00-\x1f\x7f]', arguments.title) || arguments.title == "." || arguments.title == ".." ) reject(400, "invalid_name");
 		if ( !isInstanceOf(arguments.body, "java.lang.String") ) reject(400, "invalid_input");
+		if ( arguments.body.getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length < 1 || arguments.body.getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length > 1048576 ) reject(413, "file_size");
 		var normalized = new secondBrain.TextNoteExtractor().normalizeText(arguments.body).text;
+		if ( normalized.getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length < 1 || normalized.getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length > 1048576 ) reject(413, "file_size");
 		var tempDirectory = uploadDirectory();
 		try {
 			fileWrite(tempDirectory & "/note.txt", normalized, "UTF-8");

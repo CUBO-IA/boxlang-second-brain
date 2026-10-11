@@ -1,0 +1,127 @@
+<bx:script>
+	data = getHTTPRequestData();
+	headers = data.headers;
+	method = uCase(data.method);
+	op = structKeyExists(url, "op") ? toString(url.op) : "";
+	noteOperation = listFind("createNote,updateNote", op) > 0;
+	maxBytes = noteOperation ? 1100000 : 32768;
+	body = {};
+	bodyText = structKeyExists(data, "content") && !isNull(data.content) ? toString(data.content) : "";
+	contentBytes = bodyText.getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length;
+	declaredLength = structKeyExists(headers, "Content-Length") ? toString(headers["Content-Length"]) : "";
+	declaredTooLarge = len(declaredLength) && reFind("^[0-9]+$", declaredLength) == 1 && toNumeric(declaredLength) > maxBytes;
+	status = 200;
+	responseBody = {};
+	invalid = "";
+	if ( contentBytes > maxBytes || declaredTooLarge ) {
+		status = 413;
+		responseBody = {errorCategory:"body_too_large", category:"limit", message:"No se pudo completar la operación."};
+	} else if ( len(bodyText) ) {
+		contentType = structKeyExists(headers, "Content-Type") ? toString(headers["Content-Type"]) : "";
+		if ( method == "GET" || !findNoCase("application/json", contentType) ) invalid = "invalid_input";
+		else {
+			try { body = jsonDeserialize(bodyText); if ( !isStruct(body) ) invalid = "invalid_input"; }
+			catch (any invalidJson) { invalid = "invalid_input"; }
+		}
+	}
+	if ( status == 413 ) {
+		// Keep the early body-limit response; never parse or dispatch an oversized body.
+	} else if ( len(invalid) ) {
+		status = 400;
+		responseBody = {errorCategory:invalid, category:"invalid_input", message:"No se pudo completar la operación."};
+	} else {
+		sessionToken = "";
+		cookieHeader = structKeyExists(headers, "Cookie") ? toString(headers.Cookie) : "";
+		duplicateCookie = false;
+		if ( len(cookieHeader) <= 4096 ) {
+			for ( pair in listToArray(cookieHeader, ";") ) {
+				at = find("=", pair);
+				if ( at > 1 && lCase(trim(left(pair, at - 1))) == "sb_session" ) {
+					if ( len(sessionToken) ) duplicateCookie = true;
+					else sessionToken = trim(mid(pair, at + 1, len(pair)));
+				}
+			}
+		} else invalid = "invalid_input";
+		if ( duplicateCookie ) sessionToken = "";
+		request = {
+			method:method, body:body, sessionToken:sessionToken,
+			origin:structKeyExists(headers, "Origin") ? toString(headers.Origin) : "",
+			csrfToken:structKeyExists(headers, "X-CSRF-Token") ? toString(headers["X-CSRF-Token"]) : "",
+			spaceId:structKeyExists(url, "spaceId") ? toString(url.spaceId) : "",
+			documentId:structKeyExists(url, "documentId") ? toString(url.documentId) : "",
+			conversationId:structKeyExists(url, "conversationId") ? toString(url.conversationId) : "",
+			messageId:structKeyExists(url, "messageId") ? toString(url.messageId) : "",
+			citationId:structKeyExists(url, "citationId") ? toString(url.citationId) : "",
+			offset:structKeyExists(url, "offset") ? toString(url.offset) : "0",
+			limit:structKeyExists(url, "limit") ? toString(url.limit) : "",
+			afterSequence:structKeyExists(url, "afterSequence") ? toString(url.afterSequence) : "0"
+		};
+		if ( listFind("createNote,updateNote,source,listConversations,createConversation", op) && reFind("^[1-9][0-9]{0,17}$", request.spaceId) != 1 ) invalid = "invalid_input";
+		if ( listFind("updateNote,source", op) && reFindNoCase("^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$", request.documentId) != 1 ) invalid = "invalid_input";
+		if ( len(invalid) ) {
+			status = 400;
+			responseBody = {errorCategory:invalid, category:"invalid_input", message:"No se pudo completar la operación."};
+		} else {
+			library = new secondBrain.LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId));
+			conversations = new secondBrain.ConversationService();
+			try {
+				switch ( op ) {
+					case "createNote":
+						if ( method != "POST" ) throw(type="SecondBrain.Library", message="method", errorCode="405");
+						if ( !isStruct(body) || structCount(body) != 3 || !structKeyExists(body,"title") || !structKeyExists(body,"body") || !structKeyExists(body,"operationKey") ) throw(type="SecondBrain.Library", message="invalid_input", errorCode="400");
+						created = library.createNote(request, body.title, body.body, body.operationKey);
+						status = 202; responseBody = {note:{documentId:created.documentId, versionId:created.versionId, taskId:created.taskId, status:created.status}};
+						break;
+					case "updateNote":
+						if ( method != "PUT" ) throw(type="SecondBrain.Library", message="method", errorCode="405");
+						if ( !isStruct(body) || structCount(body) != 3 || !structKeyExists(body,"title") || !structKeyExists(body,"body") || !structKeyExists(body,"operationKey") ) throw(type="SecondBrain.Library", message="invalid_input", errorCode="400");
+						updated = library.updateNote(request, request.documentId, body.title, body.body, body.operationKey);
+						status = 202; responseBody = {note:{documentId:updated.documentId, versionId:updated.versionId, taskId:updated.taskId, status:updated.status}};
+						break;
+					case "source":
+						if ( method != "GET" ) throw(type="SecondBrain.Library", message="method", errorCode="405");
+						source = library.getTextContent(request, request.documentId);
+						status = 200; responseBody = {source:source};
+						break;
+					case "listConversations":
+						request.offset = request.offset; request.limit = len(request.limit) ? request.limit : "50";
+						response = conversations.handle("list", request); status = response.status; responseBody = response.body;
+						break;
+					case "createConversation":
+						response = conversations.handle("create", request); status = response.status; responseBody = response.body;
+						break;
+					case "readConversation":
+						request.limit = len(request.limit) ? request.limit : "100";
+						response = conversations.handle("read", request); status = response.status; responseBody = response.body;
+						break;
+					case "sendMessage":
+						response = conversations.handle("sendMessage", request); status = response.status; responseBody = response.body;
+						break;
+					case "shareConversation":
+						response = conversations.handle("share", request); status = response.status; responseBody = response.body;
+						break;
+					case "unshareConversation":
+						response = conversations.handle("unshare", request); status = response.status; responseBody = response.body;
+						break;
+					case "resolveCitation":
+						response = conversations.handle("resolveCitation", request); status = response.status; responseBody = response.body;
+						break;
+					default:
+						status = 404; responseBody = {errorCategory:"not_found", category:"not_found", message:"No se pudo completar la operación."};
+				}
+			} catch (any error) {
+				if ( error.type == "SecondBrain.Library" ) {
+					failed = library.safeError(error); status = failed.status; responseBody = failed.body;
+				} else {
+					status = 500; responseBody = {errorCategory:"internal", category:"unknown", message:"No se pudo completar la operación."};
+				}
+			}
+		}
+	}
+
+	bx:header statusCode=status;
+	bx:header name="Cache-Control" value="no-store";
+	bx:header name="X-Content-Type-Options" value="nosniff";
+	bx:content type="application/json; charset=utf-8";
+	writeOutput(jsonSerialize(responseBody));
+</bx:script>

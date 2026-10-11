@@ -2,7 +2,8 @@
 migrations = [
     { version: 1, file: "001_accounts.sql" },
     { version: 2, file: "002_library.sql" },
-    { version: 3, file: "003_budget_and_knowledge.sql" }
+    { version: 3, file: "003_budget_and_knowledge.sql" },
+    { version: 4, file: "004_conversations.sql" }
 ];
 
 queryExecute( "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)" );

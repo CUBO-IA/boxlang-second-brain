@@ -1,0 +1,208 @@
+// Deterministic P03 conversation, history and citation suite against the isolated PostgreSQL services.
+import secondBrain.AccountService;
+import secondBrain.ConversationService;
+import secondBrain.KnowledgeCore;
+import secondBrain.LibraryService;
+import secondBrain.LibraryTaskWorker;
+import secondBrain.ProviderDouble;
+
+if ( getSystemSetting("P02_ISOLATED_DATABASE", "NO") != "YES" ) throw(message="Use isolated Compose with P02_ISOLATED_DATABASE=YES");
+function verify(required boolean condition, required string message) { if ( !arguments.condition ) throw(message=arguments.message); }
+function account(required string label, required struct accounts) {
+	var email = "conversation-#label#-#lCase(left(replace(createUUID(), "-", "", "all"), 12))#@example.invalid";
+	var input = {method:"POST", body:{email:email,password:"synthetic-conversation-password"}, origin:getSystemSetting("APP_ORIGIN"), csrfToken:"", sessionToken:"", spaceId:""};
+	var registration = arguments.accounts.handle("register", input);
+	verify(registration.status == 202, "Register synthetic #label#");
+	var login = arguments.accounts.handle("login", input);
+	verify(login.status == 200, "Login synthetic #label#");
+	input.sessionToken = listFirst(listLast(listFirst(login.setCookie, ";"), "="), ";");
+	input.csrfToken = login.body.csrfToken;
+	return {email:email, request:input, id:toString(login.body.user.id)};
+}
+function rejected(required any action, required numeric status) {
+	try { arguments.action(); } catch (any error) { return val(error.errorCode ?: 0) == arguments.status; }
+	return false;
+}
+
+function run() {
+var accounts = new AccountService();
+var runId = lCase(left(replace(createUUID(), "-", "", "all"), 12));
+var owner = {};
+var reader = {};
+var admin = {};
+var otherSpaceUser = {};
+var ownerRequest = {};
+var spaceIds = [];
+var documentIds = [];
+var conversationIds = [];
+var provider = new ProviderDouble();
+var core = new KnowledgeCore(provider);
+var library = new LibraryService((documentId, revisionId) => new secondBrain.KnowledgeIndex().removeRevision(documentId, revisionId));
+var worker = new LibraryTaskWorker(provider, library);
+var conversations = new ConversationService(core);
+var space = "";
+var otherSpace = "";
+try {
+	owner = account("owner", accounts);
+	reader = account("reader", accounts);
+	admin = account("admin", accounts);
+	otherSpaceUser = account("other", accounts);
+	ownerRequest = owner.request;
+	var budgetDay = core.getBudget().snapshot().dayUtc;
+	queryExecute("INSERT INTO budget_days (day_utc, limit_usd) VALUES (CAST(? AS DATE), 20) ON CONFLICT (day_utc) DO UPDATE SET limit_usd = GREATEST(budget_days.limit_usd, EXCLUDED.limit_usd)", [budgetDay]);
+	ownerRequest.body = {name:"Conversation #runId#"};
+	var createdSpace = accounts.handle("createSpace", ownerRequest);
+	verify(createdSpace.status == 201, "Create active space");
+	space = toString(createdSpace.body.space.id); spaceIds.append(space); ownerRequest.spaceId = space;
+	ownerRequest.body = {email:reader.email, role:"reader"}; verify(accounts.handle("addMember", ownerRequest).status == 200, "Add reader");
+	ownerRequest.body = {email:admin.email, role:"admin"}; verify(accounts.handle("addMember", ownerRequest).status == 200, "Add second admin");
+
+	var otherRequest = otherSpaceUser.request;
+	otherRequest.body = {name:"Isolated #runId#"};
+	var createdOtherSpace = accounts.handle("createSpace", otherRequest);
+	verify(createdOtherSpace.status == 201, "Create second isolated space");
+	otherSpace = toString(createdOtherSpace.body.space.id); spaceIds.append(otherSpace); otherRequest.spaceId = otherSpace;
+
+	var sourceA = library.createNote(ownerRequest, "Approval EN", "Approval is granted by the compliance director. Old source secret phrase.", "conv-a-#runId#");
+	var sourceC = library.createNote(ownerRequest, "Delete me", "A separate current approval source to delete.", "conv-c-#runId#");
+	var sourceB = library.createNote(otherRequest, "Foreign source", "Foreign space evidence must never enter this chat.", "conv-b-#runId#");
+	documentIds.append(sourceA.documentId); documentIds.append(sourceB.documentId); documentIds.append(sourceC.documentId);
+	verify(worker.processOne(sourceA.taskId).status == "completed", "Index first current note");
+	verify(worker.processOne(sourceC.taskId).status == "completed", "Index second current note in active space");
+	verify(worker.processOne(sourceB.taskId).status == "completed", "Index foreign-space note");
+	var tooLargeNote = repeatString("n", 1048577);
+	verify(rejected(() => library.createNote(ownerRequest, "Oversized", tooLargeNote, "conv-too-large-#runId#"), 413), "Note UTF-8 byte limit enforced by LibraryService");
+	var boundedContextAnswer = core.ask(space, [sourceA.documentId], repeatString("q", 4096), [repeatString("h", 4095)]);
+	verify(boundedContextAnswer.ok && provider.getLastEmbedText().getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length == 8192, "Maximum question plus safe prior context fits the embedding byte ceiling");
+	verify(provider.getLastChatPrompt().getBytes(createObject("java", "java.nio.charset.StandardCharsets").UTF_8).length <= 32000, "Serialized evidence/context prompt stays below the chat byte ceiling");
+
+	var createdConversation = conversations.create(ownerRequest, space);
+	conversationIds.append(createdConversation.id);
+	verify(createdConversation.shared == false && createdConversation.canContinue, "Conversation is private by default");
+	var first = conversations.sendMessage(ownerRequest, createdConversation.id, "Who grants approval?", {mode:"documents", documentIds:[sourceA.documentId]});
+	verify(first.userMessage.sequence == 1 && first.assistantMessage.sequence == 2 && first.assistantMessage.citations.len() == 1, "Author can ask with persisted ordered messages and citation");
+	var citationId = first.assistantMessage.citations[1].id;
+	verify(reFindNoCase("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", citationId) == 1, "Public citation ID is an unguessable persisted UUID");
+	verify(first.assistantMessage.claims[1].citationIds[1] == citationId, "Claim references persisted citation UUID");
+
+	var adminReadPrivate = conversations.handle("read", {method:"GET",sessionToken:admin.request.sessionToken,conversationId:createdConversation.id});
+	verify(adminReadPrivate.status == 404, "Admin cannot read another author's private conversation");
+	verify(conversations.handle("read", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,limit:101}).status == 400, "Conversation message page limit is bounded");
+	var beforeInvalid = provider.getEmbedCalls();
+	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, "bad empty", {mode:"documents",documentIds:[]}), 400), "Empty explicit selection rejected");
+	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, "bad foreign", {mode:"documents",documentIds:[sourceB.documentId]}), 400), "Foreign selection rejected");
+	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, "bad mixed", {mode:"documents",documentIds:[sourceA.documentId,sourceB.documentId]}), 400), "Mixed own/foreign selection rejected");
+	var oversizedQuestion = repeatString("q", 4097);
+	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, oversizedQuestion, {mode:"documents",documentIds:[sourceA.documentId]}), 400), "Question UTF-8 byte limit enforced");
+	var multibyteQuestion = repeatString("é", 2049);
+	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, multibyteQuestion, {mode:"documents",documentIds:[sourceA.documentId]}), 400), "Question limit counts UTF-8 bytes rather than characters");
+	verify(rejected(() => conversations.sendMessage(ownerRequest, createdConversation.id, "bad duplicate", {mode:"documents",documentIds:[sourceA.documentId,sourceA.documentId]}), 400), "Duplicate selected IDs rejected");
+	verify(conversations.handle("sendMessage", {method:"POST",sessionToken:ownerRequest.sessionToken,origin:ownerRequest.origin,csrfToken:ownerRequest.csrfToken,conversationId:createdConversation.id,body:{question:["not a string"],scope:{mode:"space"}}}).status == 400, "Wrong JSON scalar shape rejected");
+	verify(conversations.handle("sendMessage", {method:"POST",sessionToken:ownerRequest.sessionToken,origin:ownerRequest.origin,csrfToken:ownerRequest.csrfToken,conversationId:createdConversation.id,body:{question:"bad extra scope",scope:{mode:"space",documentIds:[]}}}).status == 400, "Manipulated scope shape rejected");
+	verify(provider.getEmbedCalls() == beforeInvalid, "Invalid selections rejected before provider calls");
+	var reservationToken = lCase(createUUID());
+	queryExecute("UPDATE conversations SET pending_token = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", [reservationToken, createdConversation.id]);
+	var busyTurn = conversations.handle("sendMessage", {method:"POST",sessionToken:ownerRequest.sessionToken,origin:ownerRequest.origin,csrfToken:ownerRequest.csrfToken,conversationId:createdConversation.id,body:{question:"concurrent turn",scope:{mode:"documents",documentIds:[sourceA.documentId]}}});
+	verify(busyTurn.status == 409 && provider.getEmbedCalls() == beforeInvalid, "Pending turn fence rejects concurrent send before provider calls");
+	queryExecute("UPDATE conversations SET pending_token = NULL WHERE id = CAST(? AS UUID)", [createdConversation.id]);
+	var invalidCitation = conversations.handle("resolveCitation", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,messageId:first.assistantMessage.id,citationId:"not-a-uuid"});
+	verify(invalidCitation.status == 400, "Invalid citation IDs rejected safely");
+	var invalidMessage = conversations.handle("resolveCitation", {method:"GET",sessionToken:ownerRequest.sessionToken,conversationId:createdConversation.id,messageId:createUUID(),citationId:citationId});
+	verify(invalidMessage.status == 404, "Citation cannot resolve against an unrelated message");
+
+	var follow = conversations.sendMessage(ownerRequest, createdConversation.id, "And who is responsible?", {mode:"documents",documentIds:[sourceA.documentId]});
+	verify(provider.getLastEmbedText().contains("Who grants approval?") && provider.getLastEmbedText().contains("And who is responsible?"), "Follow-up retrieval embeds prior user question plus current question");
+	verify(provider.getLastChatPrompt().contains("Prior user questions (untrusted conversational context") && provider.getLastChatPrompt().contains("Who grants approval?") && !provider.getLastChatPrompt().contains("Deterministic test claim."), "Model receives user-question context but no stored assistant answer");
+	var englishCitation = follow.assistantMessage.citations[1];
+	verify(englishCitation.status == "current" && englishCitation.provenance.kind == "note" && englishCitation.title == "Approval EN", "Citation metadata comes from the current version storage");
+	var crossLanguage = conversations.sendMessage(ownerRequest, createdConversation.id, "¿Quién concede la aprobación?", {mode:"documents",documentIds:[sourceA.documentId]});
+	verify(crossLanguage.assistantMessage.citations[1].excerpt.contains("Approval is granted"), "Cross-language question retrieves and preserves the English source evidence");
+	var resolvedCurrent = conversations.resolveCitation(ownerRequest, createdConversation.id, follow.assistantMessage.id, englishCitation.id);
+	verify(resolvedCurrent.citation.status == "current" && resolvedCurrent.source.revisionId == sourceA.versionId && resolvedCurrent.source.content.contains("compliance director"), "Current historical citation opens only its exact revision");
+
+	var shared = conversations.setShared(ownerRequest, createdConversation.id, true);
+	verify(shared.shared, "Author shares conversation");
+	reader.request.spaceId = space;
+	verify(library.getTextContent(reader.request, sourceA.documentId).revisionId == sourceA.versionId, "Shared member can access current source in the active space");
+	var readerRead = conversations.handle("read", {method:"GET",sessionToken:reader.request.sessionToken,conversationId:createdConversation.id});
+	verify(readerRead.status == 200 && readerRead.body.messages.len() == 6, "Active member can read shared history");
+	var adminShared = conversations.handle("read", {method:"GET",sessionToken:admin.request.sessionToken,conversationId:createdConversation.id});
+	verify(adminShared.status == 200, "Admin can read only after explicit share");
+	var readerSend = conversations.handle("sendMessage", {method:"POST",sessionToken:reader.request.sessionToken,origin:reader.request.origin,csrfToken:reader.request.csrfToken,conversationId:createdConversation.id,body:{question:"continue?",scope:{mode:"documents",documentIds:[sourceA.documentId]}}});
+	verify(readerSend.status == 404, "Shared reader cannot continue conversation");
+	var adminSend = conversations.handle("sendMessage", {method:"POST",sessionToken:admin.request.sessionToken,origin:admin.request.origin,csrfToken:admin.request.csrfToken,conversationId:createdConversation.id,body:{question:"continue?",scope:{mode:"documents",documentIds:[sourceA.documentId]}}});
+	verify(adminSend.status == 404, "Admin cannot continue another author's conversation");
+
+	var badReplacement = library.updateNote(ownerRequest, sourceA.documentId, "Approval candidate", "Candidate replacement that must fail without damaging the current version.", "conv-fail-#runId#");
+	provider.setFailNext("error");
+	verify(worker.processOne(badReplacement.taskId).status == "failed", "Synthetic replacement failure remains unpublished");
+	verify(library.getTextContent(ownerRequest, sourceA.documentId).revisionId == sourceA.versionId, "Failed replacement retains current source");
+	var oldStillCurrent = conversations.read(ownerRequest, createdConversation.id, 2, 2);
+	verify(oldStillCurrent.messages[2].citations[1].status == "current", "Failed candidate does not invalidate current historical citations");
+
+	var replacement = library.updateNote(ownerRequest, sourceA.documentId, "Approval current", "The approval is now granted by the board secretary. New source only.", "conv-replace-#runId#");
+	verify(worker.processOne(replacement.taskId).status == "completed", "Successful replacement publishes current evidence");
+	var oldAfterReplace = conversations.read(ownerRequest, createdConversation.id, 0, 4);
+	verify(oldAfterReplace.messages[2].citations[1].status == "replaced", "Old citation records replacement status");
+	var replacedOpen = conversations.resolveCitation(ownerRequest, createdConversation.id, first.assistantMessage.id, citationId);
+	verify(replacedOpen.citation.status == "replaced" && !structKeyExists(replacedOpen, "source"), "Replaced citation returns history only, never new text");
+	var afterReplacement = conversations.sendMessage(ownerRequest, createdConversation.id, "Who grants approval now?", {mode:"documents",documentIds:[sourceA.documentId]});
+	verify(!provider.getLastChatPrompt().contains("Old source secret phrase") && provider.getLastChatPrompt().contains("board secretary"), "New question re-retrieves current evidence and never sends old excerpt");
+	verify(afterReplacement.assistantMessage.citations[1].revisionId == replacement.versionId, "New citation uses replacement revision");
+
+	var secondConversation = conversations.create(ownerRequest, space); conversationIds.append(secondConversation.id);
+	var secondAnswer = conversations.sendMessage(ownerRequest, secondConversation.id, "Who grants approval?", {mode:"documents",documentIds:[sourceC.documentId]});
+	var deleteCitation = secondAnswer.assistantMessage.citations[1];
+	verify(library.deleteDocument(ownerRequest, sourceC.documentId).status == "deleted", "Delete source and derived evidence");
+	var deletedHistory = conversations.read(ownerRequest, secondConversation.id, 0, 2);
+	verify(deletedHistory.messages[2].citations[1].status == "deleted", "Deleted citation remains in history with deleted status");
+	var deletedOpen = conversations.resolveCitation(ownerRequest, secondConversation.id, secondAnswer.assistantMessage.id, deleteCitation.id);
+	verify(deletedOpen.citation.status == "deleted" && !structKeyExists(deletedOpen, "source"), "Deleted citation never resolves against replacement text");
+
+	var spaceScopeConversation = conversations.create(ownerRequest, space); conversationIds.append(spaceScopeConversation.id);
+	var spaceAnswer = conversations.sendMessage(ownerRequest, spaceScopeConversation.id, "What is the approval?", {mode:"space"});
+	verify(spaceAnswer.userMessage.scope.mode == "space" && spaceAnswer.userMessage.scope.documentIds.len() == 1 && spaceAnswer.userMessage.scope.documentIds[1] == sourceA.documentId, "Space scope is persisted with the exact effective currently available set");
+	verify(conversations.list(ownerRequest, space, 0, 50).conversations.len() >= 3, "Author lists own conversations");
+	var noOtherSpace = conversations.handle("list", {method:"GET",sessionToken:otherSpaceUser.request.sessionToken,spaceId:space});
+	verify(noOtherSpace.status == 404, "Other-space member cannot list conversations in this space");
+	var callsBeforeDisabled = provider.getChatCalls();
+	var disabledService = new ConversationService();
+	var disabledProduction = disabledService.handle("sendMessage", {method:"POST",body:{question:"no provider",scope:{mode:"documents",documentIds:[sourceA.documentId]}},sessionToken:ownerRequest.sessionToken,origin:ownerRequest.origin,csrfToken:ownerRequest.csrfToken,conversationId:createdConversation.id});
+	verify(disabledProduction.status == 503 && disabledProduction.body.errorCategory == "provider" && provider.getChatCalls() == callsBeforeDisabled, "Production provider-disabled path fails safely without a provider call");
+
+	var unshared = conversations.setShared(ownerRequest, createdConversation.id, false);
+	verify(!unshared.shared && conversations.handle("read", {method:"GET",sessionToken:reader.request.sessionToken,conversationId:createdConversation.id}).status == 404, "Unshare immediately denies member reads");
+	var beforeRemovedAccess = conversations.handle("read", {method:"GET",sessionToken:reader.request.sessionToken,conversationId:secondConversation.id});
+	verify(beforeRemovedAccess.status == 404, "Unshared conversation remains private");
+	conversations.setShared(ownerRequest, createdConversation.id, true);
+	// The admin removes the reader; stale sessions cannot read history, current source or citations.
+	ownerRequest.method = "DELETE"; ownerRequest.memberId = reader.id; ownerRequest.body = {};
+	var removed = accounts.handle("removeMember", ownerRequest);
+	verify(removed.status == 200, "Remove shared-space member: #jsonSerialize(removed)#");
+	verify(conversations.handle("read", {method:"GET",sessionToken:reader.request.sessionToken,conversationId:createdConversation.id}).status == 404, "Membership removal immediately denies conversation reads");
+	var lostCitation = conversations.handle("resolveCitation", {method:"GET",sessionToken:reader.request.sessionToken,conversationId:createdConversation.id,messageId:follow.assistantMessage.id,citationId:englishCitation.id});
+	verify(lostCitation.status == 404, "Membership removal immediately denies citation access");
+	verify(rejected(() => library.getTextContent(reader.request, sourceA.documentId), 403), "Removed member cannot get source");
+	println("OK: private/shared authorization; live membership; scope isolation; safe question-only history; current/replaced/deleted citations; deterministic injected provider.");
+} finally {
+	for ( var conversationId in conversationIds ) queryExecute("DELETE FROM conversations WHERE id = CAST(? AS UUID)", [conversationId]);
+	for ( var documentId in documentIds ) {
+		try { library.deleteDocument(documentId == sourceB.documentId ? otherRequest : ownerRequest, documentId); } catch (any ignoredDelete) { }
+		queryExecute("DELETE FROM knowledge_fragments WHERE document_id = ?", [documentId]);
+		queryExecute("DELETE FROM knowledge_documents WHERE id = ?", [documentId]);
+		queryExecute("UPDATE documents SET current_version = NULL, candidate_version = NULL WHERE id = CAST(? AS UUID)", [documentId]);
+		queryExecute("DELETE FROM document_tasks WHERE document_id = CAST(? AS UUID)", [documentId]);
+		queryExecute("DELETE FROM document_versions WHERE document_id = CAST(? AS UUID)", [documentId]);
+		queryExecute("DELETE FROM documents WHERE id = CAST(? AS UUID)", [documentId]);
+	}
+	for ( var spaceId in spaceIds ) queryExecute("DELETE FROM spaces WHERE id = CAST(? AS BIGINT)", [spaceId]);
+	for ( var synthetic in [owner, reader, admin, otherSpaceUser] ) {
+		if ( structKeyExists(synthetic, "email") ) {
+			queryExecute("DELETE FROM accounts WHERE email = ?", [synthetic.email]);
+			queryExecute("DELETE FROM account_rate_limits WHERE subject_hash = ?", [lCase(hash(synthetic.email, "SHA-256"))]);
+		}
+	}
+}
+}
+
+run();
