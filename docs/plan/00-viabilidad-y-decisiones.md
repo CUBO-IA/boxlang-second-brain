@@ -1,6 +1,6 @@
 # Fase 00 — Viabilidad y decisiones de implementación
 
-**Estado:** Bloqueada (pendiente de verificación independiente). **Dependencia:** ninguna. [Índice](README.md).
+**Estado:** Bloqueada por evidencia externa pendiente. La re-revisión local final de G1/G2/G3 fue aprobada por Sol; esto no verifica el cierre global de fase 00. **Dependencia:** ninguna. [Índice](README.md).
 
 **Fuente:** [arquitectura](../specification/06-arquitectura-y-seguridad.md) y [validaciones técnicas previas](../specification/08-aceptacion-y-pendientes.md#validaciones-técnicas-previas).
 
@@ -60,7 +60,7 @@ Completar esta tabla con resultado real y enlace a la evidencia. «Por decidir»
 
 ## Ejecución de Task 1
 
-Resultados, comandos, versiones, decisiones propuestas y bloqueos: [informe Task 1](../../.superpowers/sdd/00-viabilidad-y-decisiones/task-1-report.md). El estado permanece Bloqueada hasta validación independiente de Sol; las interfaces, scripts y fixtures no equivalen a aprobación técnica.
+Resultados, comandos, versiones, decisiones propuestas y bloqueos: [informe Task 1](../../.superpowers/sdd/00-viabilidad-y-decisiones/task-1-report.md). Sol aprobó localmente la última fix wave G1/G2/G3 en [re-revisión final](../../.superpowers/sdd/00-viabilidad-y-decisiones/sol-final-rereview.md); los checks locales de extracción/seguridad/validación sintética no equivalen a tráfico real de proveedor ni a evidencia operativa externa. Fase 00 permanece Bloqueada: no se validaron respuestas reales, dimensiones/uso/coste/tarifas de modelos ni host/dominio/TLS/condiciones de operación.
 
 ## Defaults locales propuestos para implementación (no medidos)
 

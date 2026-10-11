@@ -30,6 +30,7 @@ services:
     environment:
       BOXLANG_CONFIG: /modules/second-brain/config/boxlang.json
       REWRITES: "false"
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3002}
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-second_brain}
       POSTGRES_USER: ${POSTGRES_USER:-second_brain}

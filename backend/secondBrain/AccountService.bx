@@ -1,0 +1,416 @@
+import java:java.security.MessageDigest;
+
+/** Reusable account, session, space and membership business/security operations. */
+class {
+	private numeric function hashIterations() { return 600000; }
+	private numeric function sessionHours() { return 12; }
+	private numeric function rateWindowMinutes() { return 15; }
+	private numeric function rateLimitAttempts() { return 10; }
+
+	private struct function result(required numeric status, required struct body, string setCookie="") {
+		var response = { status: arguments.status, body: arguments.body };
+		if ( len(arguments.setCookie) ) response.setCookie = arguments.setCookie;
+		return response;
+	}
+
+	private struct function failure(required numeric status, required string message, string setCookie="") {
+		return result(arguments.status, { message: arguments.message }, arguments.setCookie);
+	}
+
+	private boolean function isText(required any value) {
+		return isInstanceOf(arguments.value, "java.lang.String");
+	}
+
+	private struct function normalizedEmail(required any value) {
+		if ( !isText(arguments.value) ) return { valid: false, email: "" };
+		var email = lCase(trim(arguments.value));
+		var valid = len(email) <= 254 && reFindNoCase("^[^@\s]{1,64}@[^@\s.]+(\.[^@\s.]+)+$", email) == 1;
+		return { valid: valid, email: valid ? email : "" };
+	}
+
+	private boolean function validPassword(required any value) {
+		return isText(arguments.value) && len(arguments.value) >= 12 && len(arguments.value) <= 128;
+	}
+
+	private struct function secureBytes(required numeric length) {
+		var random = createObject("java", "java.security.SecureRandom");
+		var bytes = random.generateSeed(arguments.length);
+		var base64 = createObject("java", "java.util.Base64");
+		return {
+			bytes: bytes,
+			standard: base64.getEncoder().encodeToString(bytes),
+			url: base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+		};
+	}
+
+	private string function derivePassword(required string password, required string salt, required numeric iterations) {
+		var decoder = createObject("java", "java.util.Base64").getDecoder();
+		var spec = createObject("java", "javax.crypto.spec.PBEKeySpec").init(
+			arguments.password.toCharArray(), decoder.decode(arguments.salt), arguments.iterations, 256
+		);
+		try {
+			var derived = createObject("java", "javax.crypto.SecretKeyFactory")
+				.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded();
+			return createObject("java", "java.util.Base64").getEncoder().encodeToString(derived);
+		} finally {
+			spec.clearPassword();
+		}
+	}
+
+	private struct function passwordRecord(required string password) {
+		var random = secureBytes(16);
+		return {
+			salt: random.standard,
+			hash: derivePassword(arguments.password, random.standard, hashIterations()),
+			iterations: hashIterations()
+		};
+	}
+
+	private boolean function verifyPassword(required string password, required string salt, required string expected, required numeric iterations) {
+		var actual = createObject("java", "java.util.Base64").getDecoder().decode(
+			derivePassword(arguments.password, arguments.salt, arguments.iterations)
+		);
+		var stored = createObject("java", "java.util.Base64").getDecoder().decode(arguments.expected);
+		return MessageDigest.isEqual(actual, stored);
+	}
+
+	private string function tokenHash(required string token) {
+		return lCase(hash(arguments.token, "SHA-256"));
+	}
+
+	private string function newToken() {
+		return secureBytes(32).url;
+	}
+
+	private string function appOrigin() {
+		return trim(getSystemSetting("APP_ORIGIN", "http://127.0.0.1:3002"));
+	}
+
+	private boolean function secureCookie() {
+		var origin = appOrigin();
+		if ( left(origin, 8) == "https://" ) return true;
+		return left(origin, 7) == "http://" && reFindNoCase("^http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$", origin) == 1;
+	}
+
+	private string function cookieHeader(required string token, boolean clear=false) {
+		var headerValue = "sb_session=" & arguments.token & "; Path=/; HttpOnly; SameSite=Lax; ";
+		headerValue &= arguments.clear ? "Max-Age=0" : "Max-Age=43200";
+		if ( secureCookie() && left(appOrigin(), 8) == "https://" ) headerValue &= "; Secure";
+		return headerValue;
+	}
+
+	private string function clearCookie() {
+		return cookieHeader("", true);
+	}
+
+	private boolean function validToken(required string token) {
+		return len(arguments.token) == 43 && reFind("^[A-Za-z0-9_-]{43}$", arguments.token) == 1;
+	}
+
+	private struct function sessionFor(required string token) {
+		if ( !validToken(arguments.token) ) return {};
+		var session = queryExecute(
+			"SELECT s.user_id, s.csrf_token, a.email FROM account_sessions s JOIN accounts a ON a.id = s.user_id WHERE s.session_hash = ? AND s.expires_at > CURRENT_TIMESTAMP",
+			[ tokenHash(arguments.token) ]
+		);
+		if ( session.recordCount != 1 ) return {};
+		return { userId: session.user_id[1], csrfToken: session.csrf_token[1], email: session.email[1] };
+	}
+
+	private struct function consumeRateLimit(required string action, required string email) {
+		// ponytail: per-email throttling does not stop sprays across many identities; add a trusted edge/IP limit only after the proxy identity contract exists.
+		queryExecute("DELETE FROM account_rate_limits WHERE window_started_at < CURRENT_TIMESTAMP - INTERVAL '1 day'");
+		var subjectHash = lCase(hash(arguments.email, "SHA-256"));
+		var count = queryExecute(
+			"INSERT INTO account_rate_limits (action, subject_hash, window_started_at, attempts) VALUES (?, ?, date_trunc('hour', CURRENT_TIMESTAMP) + (EXTRACT(MINUTE FROM CURRENT_TIMESTAMP)::INTEGER / 15) * INTERVAL '15 minutes', 1) " &
+			"ON CONFLICT (action, subject_hash) DO UPDATE SET attempts = CASE WHEN account_rate_limits.window_started_at = EXCLUDED.window_started_at THEN LEAST(account_rate_limits.attempts + 1, 1000000) ELSE 1 END, window_started_at = EXCLUDED.window_started_at",
+			[ arguments.action, subjectHash ]
+		);
+		var count = queryExecute("SELECT attempts FROM account_rate_limits WHERE action = ? AND subject_hash = ?", [ arguments.action, subjectHash ]);
+		return { allowed: count.attempts[1] <= rateLimitAttempts(), attempts: count.attempts[1] };
+	}
+
+	private struct function requireOrigin(required struct request) {
+		var expected = appOrigin();
+		var validConfig = left(expected, 8) == "https://" || secureCookie();
+		if ( !validConfig || !len(expected) || !structKeyExists(arguments.request, "origin") || arguments.request.origin != expected ) {
+			return { allowed: false, failure: failure(403, "Solicitud no permitida.") };
+		}
+		return { allowed: true };
+	}
+
+	private struct function requireMutation(required struct request) {
+		var originCheck = requireOrigin(arguments.request);
+		if ( !originCheck.allowed ) return originCheck;
+		if ( !structKeyExists(arguments.request, "sessionToken") || !validToken(arguments.request.sessionToken) ) {
+			return { allowed: false, failure: failure(401, "Inicia sesión para continuar.", clearCookie()) };
+		}
+		var session = sessionFor(arguments.request.sessionToken);
+		if ( structIsEmpty(session) ) return { allowed: false, failure: failure(401, "Tu sesión ha caducado. Inicia sesión de nuevo.", clearCookie()) };
+		var submitted = structKeyExists(arguments.request, "csrfToken") ? arguments.request.csrfToken : "";
+		var expectedBytes = session.csrfToken.getBytes("UTF-8");
+		var submittedBytes = isText(submitted) ? submitted.getBytes("UTF-8") : "".getBytes("UTF-8");
+		if ( !MessageDigest.isEqual(expectedBytes, submittedBytes) ) return { allowed: false, failure: failure(403, "Solicitud no permitida.") };
+		return { allowed: true, session: session };
+	}
+
+	/** Shared live-membership authorization; lockSpace is used before writes to serialize all space mutations. */
+	struct function authorize(required string sessionToken, required any spaceId, required string action, boolean lockSpace=false) {
+		var result = { allowed: false, sessionValid: false, role: "", userId: 0 };
+		var session = sessionFor(arguments.sessionToken);
+		if ( structIsEmpty(session) ) return result;
+		result.sessionValid = true;
+		result.userId = session.userId;
+		var id = toString(arguments.spaceId);
+		if ( reFind("^[1-9][0-9]{0,17}$", id) != 1 ) return result;
+		if ( arguments.lockSpace ) {
+			var lockedSpace = queryExecute("SELECT id FROM spaces WHERE id = CAST(? AS BIGINT) FOR UPDATE", [ id ]);
+			if ( lockedSpace.recordCount != 1 ) return result;
+		}
+		var member = queryExecute(
+			"SELECT role FROM memberships WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT)",
+			[ id, toString(session.userId) ]
+		);
+		if ( member.recordCount != 1 ) return result;
+		result.role = member.role[1];
+		switch ( arguments.action ) {
+			case "read": result.allowed = true; break;
+			case "write_document": result.allowed = listFind("admin,editor", result.role) > 0; break;
+			case "manage_members": result.allowed = result.role == "admin"; break;
+			default: result.allowed = false;
+		}
+		return result;
+	}
+
+	private struct function createSession(required any userId, required string email) {
+		var token = newToken();
+		var csrf = newToken();
+		var expiresInHours = sessionHours();
+		queryExecute("DELETE FROM account_sessions WHERE expires_at <= CURRENT_TIMESTAMP");
+		queryExecute(
+			"INSERT INTO account_sessions (session_hash, user_id, csrf_token, expires_at) VALUES (?, CAST(? AS BIGINT), ?, CURRENT_TIMESTAMP + (?::INTEGER * INTERVAL '1 hour'))",
+			[ tokenHash(token), toString(arguments.userId), csrf, expiresInHours ]
+		);
+		return result(200, {
+			user: { id: arguments.userId, email: arguments.email },
+			csrfToken: csrf
+		}, cookieHeader(token));
+	}
+
+	private struct function register(required struct body) {
+		if ( !structKeyExists(arguments.body, "email") || !structKeyExists(arguments.body, "password") ) return failure(400, "Revisa el correo y la contraseña.");
+		var email = normalizedEmail(arguments.body.email);
+		if ( !email.valid || !validPassword(arguments.body.password) ) return failure(400, "Revisa el correo y la contraseña.");
+		var rate = consumeRateLimit("register", email.email);
+		if ( !rate.allowed ) return failure(429, "Demasiadas solicitudes. Inténtalo más tarde.");
+		var password = passwordRecord(arguments.body.password);
+		queryExecute(
+			"INSERT INTO accounts (email, password_salt, password_hash, password_iterations) VALUES (?, ?, ?, CAST(? AS INTEGER)) ON CONFLICT (email) DO NOTHING",
+			[ email.email, password.salt, password.hash, password.iterations ]
+		);
+		return result(202, { message: "Solicitud procesada" });
+	}
+
+	private struct function login(required struct body) {
+		if ( !structKeyExists(arguments.body, "email") || !structKeyExists(arguments.body, "password") ) return failure(400, "Revisa el correo y la contraseña.");
+		var email = normalizedEmail(arguments.body.email);
+		if ( !email.valid || !validPassword(arguments.body.password) ) return failure(400, "Revisa el correo y la contraseña.");
+		var rate = consumeRateLimit("login", email.email);
+		if ( !rate.allowed ) return failure(429, "Demasiadas solicitudes. Inténtalo más tarde.");
+		var account = queryExecute("SELECT id, email, password_salt, password_hash, password_iterations FROM accounts WHERE email = ?", [ email.email ]);
+		if ( account.recordCount != 1 ) {
+			// Perform one PBKDF2 derivation for absent users too; never disclose account existence.
+			derivePassword(arguments.body.password, "MDEyMzQ1Njc4OWFiY2RlZg==", hashIterations());
+			return failure(401, "Credenciales no válidas.");
+		}
+		if ( !verifyPassword(arguments.body.password, account.password_salt[1], account.password_hash[1], account.password_iterations[1]) ) {
+			return failure(401, "Credenciales no válidas.");
+		}
+		queryExecute("DELETE FROM account_rate_limits WHERE action = 'login' AND subject_hash = ?", [ lCase(hash(email.email, "SHA-256")) ]);
+		return createSession(account.id[1], account.email[1]);
+	}
+
+	private struct function current(required struct request) {
+		var sessionToken = structKeyExists(arguments.request, "sessionToken") ? arguments.request.sessionToken : "";
+		var session = sessionFor(sessionToken);
+		if ( structIsEmpty(session) ) return failure(401, "Inicia sesión para continuar.", len(sessionToken) ? clearCookie() : "");
+		return result(200, {
+			user: { id: session.userId, email: session.email },
+			csrfToken: session.csrfToken
+		});
+	}
+
+	private struct function logout(required struct request) {
+		var gate = requireMutation(arguments.request);
+		if ( !gate.allowed ) return gate.failure;
+		queryExecute("DELETE FROM account_sessions WHERE session_hash = ?", [ tokenHash(arguments.request.sessionToken) ]);
+		return result(200, { message: "Sesión cerrada." }, clearCookie());
+	}
+
+	private struct function createSpace(required struct request) {
+		var gate = requireMutation(arguments.request);
+		if ( !gate.allowed ) return gate.failure;
+		var body = arguments.request.body;
+		if ( !structKeyExists(body, "name") || !isText(body.name) ) return failure(400, "Escribe un nombre para el espacio.");
+		var name = trim(body.name);
+		if ( !len(name) || len(name) > 100 ) return failure(400, "Escribe un nombre para el espacio.");
+		var space;
+		transaction {
+			queryExecute(
+				"INSERT INTO spaces (name, created_by) VALUES (?, CAST(? AS BIGINT))",
+				[ name, toString(gate.session.userId) ]
+			);
+			space = queryExecute("SELECT currval(pg_get_serial_sequence('spaces', 'id')) AS id");
+			queryExecute(
+				"INSERT INTO memberships (space_id, user_id, role) VALUES (CAST(? AS BIGINT), CAST(? AS BIGINT), 'admin')",
+				[ toString(space.id[1]), toString(gate.session.userId) ]
+			);
+		}
+		return result(201, { space: { id: space.id[1], name: name, role: "admin" } });
+	}
+
+	private struct function listSpaces(required struct request) {
+		var sessionToken = structKeyExists(arguments.request, "sessionToken") ? arguments.request.sessionToken : "";
+		var session = sessionFor(sessionToken);
+		if ( structIsEmpty(session) ) return failure(401, "Inicia sesión para continuar.", len(sessionToken) ? clearCookie() : "");
+		var found = queryExecute(
+			"SELECT s.id, s.name, m.role FROM spaces s JOIN memberships m ON m.space_id = s.id WHERE m.user_id = CAST(? AS BIGINT) ORDER BY s.id",
+			[ toString(session.userId) ]
+		);
+		var spaces = [];
+		for ( var index = 1; index <= found.recordCount; index++ ) spaces.append({ id: found.id[index], name: found.name[index], role: found.role[index] });
+		return result(200, { spaces: spaces });
+	}
+
+	private struct function getSpace(required struct request) {
+		var sessionToken = structKeyExists(arguments.request, "sessionToken") ? arguments.request.sessionToken : "";
+		var spaceId = structKeyExists(arguments.request, "spaceId") ? arguments.request.spaceId : "";
+		var access = authorize(sessionToken, spaceId, "read");
+		if ( !access.allowed ) return failure(access.sessionValid ? 403 : 401, access.sessionValid ? "No tienes acceso a este espacio." : "Inicia sesión para continuar.", access.sessionValid ? "" : (len(sessionToken) ? clearCookie() : ""));
+		var found = queryExecute("SELECT id, name FROM spaces WHERE id = CAST(? AS BIGINT)", [ toString(spaceId) ]);
+		if ( found.recordCount != 1 ) return failure(404, "No se encontró el espacio.");
+		return result(200, { space: { id: found.id[1], name: found.name[1], role: access.role } });
+	}
+
+	private struct function listMembers(required struct request) {
+		var sessionToken = structKeyExists(arguments.request, "sessionToken") ? arguments.request.sessionToken : "";
+		var spaceId = structKeyExists(arguments.request, "spaceId") ? arguments.request.spaceId : "";
+		var access = authorize(sessionToken, spaceId, "manage_members");
+		if ( !access.allowed ) return failure(access.sessionValid ? 403 : 401, access.sessionValid ? "No tienes permiso para gestionar miembros." : "Inicia sesión para continuar.", access.sessionValid ? "" : (len(sessionToken) ? clearCookie() : ""));
+		var found = queryExecute(
+			"SELECT a.id, a.email, m.role FROM memberships m JOIN accounts a ON a.id = m.user_id WHERE m.space_id = CAST(? AS BIGINT) ORDER BY a.email",
+			[ toString(spaceId) ]
+		);
+		var members = [];
+		for ( var index = 1; index <= found.recordCount; index++ ) members.append({ id: found.id[index], email: found.email[index], role: found.role[index] });
+		return result(200, { members: members });
+	}
+
+	private struct function addMember(required struct request) {
+		var gate = requireMutation(arguments.request);
+		if ( !gate.allowed ) return gate.failure;
+		var body = arguments.request.body;
+		var spaceId = structKeyExists(arguments.request, "spaceId") ? toString(arguments.request.spaceId) : "";
+		var email = structKeyExists(body, "email") ? normalizedEmail(body.email) : { valid: false, email: "" };
+		var role = structKeyExists(body, "role") && isText(body.role) ? lCase(body.role) : "";
+		if ( !email.valid || !listFind("admin,editor,reader", role) || reFind("^[1-9][0-9]{0,17}$", spaceId) != 1 ) return failure(400, "Revisa el correo y el rol.");
+		var outcome = { denied: false, noSpace: false };
+		transaction {
+			var access = authorize(arguments.request.sessionToken, spaceId, "manage_members", true);
+			if ( !access.allowed ) {
+				outcome.denied = !access.sessionValid || access.role != "";
+				outcome.noSpace = access.sessionValid && access.role == "";
+			} else {
+				// One INSERT..SELECT handles both absent accounts and existing memberships; ON CONFLICT preserves an existing role.
+				queryExecute(
+					"INSERT INTO memberships (space_id, user_id, role) SELECT CAST(? AS BIGINT), id, ? FROM accounts WHERE email = ? ON CONFLICT (space_id, user_id) DO NOTHING",
+					[ spaceId, role, email.email ]
+				);
+			}
+		}
+		if ( outcome.denied ) return failure(403, "No tienes permiso para gestionar miembros.");
+		if ( outcome.noSpace ) return failure(404, "No se encontró el espacio.");
+		return result(200, { message: "Solicitud procesada" });
+	}
+
+	private struct function changeMember(required struct request, required boolean remove=false) {
+		var gate = requireMutation(arguments.request);
+		if ( !gate.allowed ) return gate.failure;
+		var spaceId = structKeyExists(arguments.request, "spaceId") ? toString(arguments.request.spaceId) : "";
+		var memberId = structKeyExists(arguments.request, "memberId") ? toString(arguments.request.memberId) : "";
+		var role = structKeyExists(arguments.request.body, "role") && isText(arguments.request.body.role) ? lCase(arguments.request.body.role) : "";
+		if ( reFind("^[1-9][0-9]{0,17}$", spaceId) != 1 || reFind("^[1-9][0-9]{0,17}$", memberId) != 1 || (!arguments.remove && !listFind("admin,editor,reader", role)) ) return failure(400, "Revisa el espacio, el miembro y el rol.");
+		var outcome = { denied: false, noSpace: false, missing: false, lastAdmin: false };
+		transaction {
+			var access = authorize(arguments.request.sessionToken, spaceId, "manage_members", true);
+			if ( !access.allowed ) {
+				outcome.denied = !access.sessionValid || access.role != "";
+				outcome.noSpace = access.sessionValid && access.role == "";
+			} else {
+				var target = queryExecute("SELECT role FROM memberships WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT) FOR UPDATE", [ spaceId, memberId ]);
+				if ( target.recordCount != 1 ) outcome.missing = true;
+				else if ( target.role[1] == "admin" && (arguments.remove || role != "admin") ) {
+					var admins = queryExecute("SELECT COUNT(*) AS total FROM memberships WHERE space_id = CAST(? AS BIGINT) AND role = 'admin'", [ spaceId ]);
+					if ( admins.total[1] <= 1 ) outcome.lastAdmin = true;
+					else if ( arguments.remove ) queryExecute("DELETE FROM memberships WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT)", [ spaceId, memberId ]);
+					else queryExecute("UPDATE memberships SET role = ? WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT)", [ role, spaceId, memberId ]);
+				} else if ( arguments.remove ) {
+					queryExecute("DELETE FROM memberships WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT)", [ spaceId, memberId ]);
+				} else {
+					queryExecute("UPDATE memberships SET role = ? WHERE space_id = CAST(? AS BIGINT) AND user_id = CAST(? AS BIGINT)", [ role, spaceId, memberId ]);
+				}
+			}
+		}
+		if ( outcome.denied ) return failure(403, "No tienes permiso para gestionar miembros.");
+		if ( outcome.noSpace ) return failure(404, "No se encontró el espacio.");
+		if ( outcome.missing ) return failure(404, "No se encontró el miembro.");
+		if ( outcome.lastAdmin ) return failure(409, "El espacio debe conservar al menos una persona administradora.");
+		return result(200, { message: arguments.remove ? "Miembro retirado." : "Rol actualizado." });
+	}
+
+	private struct function dispatch(required string operation, required struct request) {
+		var expectedMethod = "";
+		switch ( arguments.operation ) {
+			case "register":
+		case "login":
+		case "logout":
+		case "createSpace":
+		case "addMember": expectedMethod = "POST"; break;
+			case "current":
+			case "spaces":
+			case "space":
+			case "members": expectedMethod = "GET"; break;
+			case "changeMember": expectedMethod = "PATCH"; break;
+			case "removeMember": expectedMethod = "DELETE"; break;
+			default: return failure(404, "No se encontró la operación.");
+		}
+		if ( uCase(arguments.request.method) != expectedMethod ) return failure(405, "Método no permitido.");
+		if ( listFind("register,login", arguments.operation) ) {
+			var origin = requireOrigin(arguments.request);
+			if ( !origin.allowed ) return origin.failure;
+		}
+		switch ( arguments.operation ) {
+			case "register": return register(arguments.request.body);
+			case "login": return login(arguments.request.body);
+			case "current": return current(arguments.request);
+			case "logout": return logout(arguments.request);
+			case "spaces": return listSpaces(arguments.request);
+			case "createSpace": return createSpace(arguments.request);
+			case "space": return getSpace(arguments.request);
+			case "members": return listMembers(arguments.request);
+			case "addMember": return addMember(arguments.request);
+			case "changeMember": return changeMember(arguments.request);
+			case "removeMember": return changeMember(arguments.request, true);
+			default: return failure(404, "No se encontró la operación.");
+		}
+	}
+
+	struct function handle(required string operation, required struct request) {
+		try {
+			return dispatch(arguments.operation, arguments.request);
+		} catch (any error) {
+			// Do not expose SQL, hashes, credentials or parser/runtime details to the HTTP caller.
+			return failure(500, "No se pudo completar la solicitud.");
+		}
+	}
+}

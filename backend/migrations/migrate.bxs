@@ -1,0 +1,22 @@
+// Run with: docker compose exec boxlang boxlang backend/migrations/migrate.bxs
+migrations = [
+    { version: 1, file: "001_accounts.sql" }
+];
+
+queryExecute( "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)" );
+
+for ( migration in migrations ) {
+    applied = queryExecute( "SELECT version FROM schema_migrations WHERE version = CAST(? AS INTEGER)", [ migration.version ] );
+    if ( applied.recordCount == 0 ) {
+        sql = fileRead( migration.file );
+        transaction {
+            for ( statement in listToArray( sql, ";" ) ) {
+                if ( len( trim( statement ) ) ) queryExecute( statement );
+            }
+            queryExecute( "INSERT INTO schema_migrations (version) VALUES (CAST(? AS INTEGER))", [ migration.version ] );
+        }
+        println( "Applied migration #migration.version# from #migration.file#" );
+    } else {
+        println( "Migration #migration.version# already applied" );
+    }
+}
