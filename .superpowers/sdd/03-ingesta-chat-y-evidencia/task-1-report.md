@@ -42,3 +42,16 @@ All commands ran through the isolated wrapper in `/tmp/opencode/second-brain-pha
 - Retrieval supplies the top three vector matches so serialized evidence stays within the existing 32 KB chat-input bound. Raise this only after adding byte-budgeted context packing.
 - Later-phase formats such as Markdown remain accepted as originals but fail their task as `unsupported_format`; they never become indexed/available. HTTP note/viewer and conversation/UI wiring remain task 2 scope.
 - No new dependencies, runtimes, global installs, credentials, or schema changes.
+
+## Review fix round 1
+
+- Updated the idempotency request signature to cover `provenanceKind` and the resolved media type, in addition to name, content hash and document ID. Reusing one operation key across upload and note now conflicts instead of replaying the wrong source type.
+- Extended `tests/pipeline-p03.bxs` to verify upload→note and note→upload same-key conflicts, plus same-kind upload and note replays preserving the original document/version identity.
+- Fix commit: `8e6580e` — Bind library idempotency to source kind.
+
+Exact verification:
+
+| Command | Output |
+|---|---|
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T -e P02_ISOLATED_DATABASE=YES boxlang boxlang tests/pipeline-p03.bxs` | `OK: durable notes/TXT pipeline; normalized UTF-8; partial/retry staging; lease/candidate/delete fences; structured validation; provider default` |
+| `bash .superpowers/sdd/03-ingesta-chat-y-evidencia/compose exec -T -e P02_RUN=task1-r1-replay-274b boxlang boxlang tests/phase02-core.bxs` | `OK P02.1–P02.5 / V03,V05–V08,V16,V18: private files, replay/duplicate, recovery, leases, synthetic publication fence, replacement, partial delete, size boundary. No AI/indexing certified.` |
