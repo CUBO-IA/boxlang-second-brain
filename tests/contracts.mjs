@@ -51,6 +51,55 @@ function resolve(record) {
   return { text, index: kind === "line" ? start.line - 1 : record.rows.findIndex((row) => row.text === text && row.key === (kind === "docx-paragraph" ? `paragraph${start.paragraph}` : kind === "pdf-page" ? `page${start.page}` : kind === "json-path" ? start.path : kind === "csv-cell" ? `row${start.row}:${start.column}` : `${start.sheet}!${start.cell}`)) };
 }
 
+function resolveManifestEvidence(source, location) {
+  const { kind, quote } = location;
+  assert.ok(quote, "evidence quote is required");
+  let value;
+  if (kind === "line") {
+    assert.ok(Number.isInteger(location.line) && location.line > 0);
+    const line = source.text.split("\n")[location.line - 1];
+    assert.notEqual(line, undefined, "line coordinate exists");
+    value = line.slice(location.start - 1, location.end);
+  } else if (kind === "json-path") {
+    assert.ok(location.path && Number.isInteger(location.start) && Number.isInteger(location.end));
+    value = location.path.split(".").reduce((node, key) => {
+      assert.ok(node && typeof node === "object" && Object.hasOwn(node, key), `JSON path segment ${key} exists`);
+      return node[key];
+    }, JSON.parse(source.text));
+    assert.ok(["string", "number", "boolean"].includes(typeof value), "JSON citation must resolve to a scalar");
+    value = String(value).slice(location.start - 1, location.end);
+  } else if (kind === "csv-cell") {
+    assert.ok(Number.isInteger(location.row) && location.row > 0, "CSV row is a positive integer");
+    assert.ok(location.column, "CSV column is required");
+    const lines = source.text.split("\n");
+    assert.ok(lines.every((line) => !line.includes('"')), "quoted CSV is outside this frozen fixture subset");
+    const headers = lines[0].split(",");
+    assert.equal(new Set(headers).size, headers.length, "CSV headers are unique");
+    const column = headers.indexOf(location.column);
+    assert.ok(column >= 0, `CSV column ${location.column} exists`);
+    const row = lines[location.row - 1];
+    assert.notEqual(row, undefined, `CSV row ${location.row} exists`);
+    value = row.split(",")[column];
+    assert.notEqual(value, undefined, `CSV row ${location.row} has column ${location.column}`);
+    value = value.slice(location.start - 1, location.end);
+  } else if (kind === "pdf-page" || kind === "xlsx-cell") {
+    const record = exported.documents.find(({ id }) => id === source.file);
+    assert.ok(record, `${kind} has a BoxLang extraction export`);
+    assert.equal(record.sha256, source.sha256, `${kind} input/export hashes agree`);
+    const { page, sheet, cell, start, end } = location;
+    const normalized = kind === "pdf-page"
+      ? { kind, start: { page, offset: start }, end: { page, offset: end }, quote }
+      : { kind, start: { sheet, cell, offset: start }, end: { sheet, cell, offset: end }, quote };
+    return resolve({ ...record, location: normalized });
+  } else {
+    assert.fail(`Unsupported evidence location kind: ${kind}`);
+  }
+  assert.ok(Number.isInteger(location.start) && Number.isInteger(location.end) && location.start > 0 && location.end >= location.start, `${kind} offsets are valid integers`);
+  assert.equal(location.end - location.start + 1, quote.length, `${kind} range length matches quote`);
+  assert.equal(value, quote, `${kind} resolves the exact source quote`);
+  return value;
+}
+
 for (const record of exported.documents) {
   await assertFresh(record);
   resolve(record);
@@ -68,7 +117,7 @@ for (const id of ["locations.md", "locations.txt", "locations.js"]) {
   assert.equal(resolve(record).text.slice(record.location.start.offset - 1, record.location.end.offset), quote);
 }
 const docx = exported.documents.find((item) => item.id === "locations.docx");
-assert.equal(docx.content.split("Exact DOCX target").length - 1, 2);
+assert.equal(docx.content.split("Exact DOCX & target").length - 1, 2);
 assert.equal(resolve(docx).index, 1, "DOCX paragraph 2 citation resolves to paragraph 2, not the repeated paragraph 3");
 const markdown = exported.documents.find((item) => item.id === "locations.md");
 assert.throws(() => resolve({ ...markdown, location: { ...markdown.location, end: { ...markdown.location.end, line: 2 } } }), /cannot end on another/);
@@ -97,22 +146,7 @@ for (const item of evaluation.cases) {
     const source = evaluation.sources[evidence.source];
     assert.ok(source && item.selected.includes(`${source.id}@${source.version}`) || source && item.selected.includes(source.id), `${item.id} evidence source is selected`);
     assert.ok(evidence.location && evidence.location.quote, `${item.id} evidence has exact quote and location`);
-    if (source.text && evidence.location.kind === "line") {
-      const { line, start, end, quote } = evidence.location;
-      assert.ok(Number.isInteger(line) && Number.isInteger(start) && Number.isInteger(end) && start > 0 && end >= start);
-      const actualLine = source.text.split("\n")[line - 1];
-      assert.equal(end - start + 1, quote.length);
-      assert.equal(actualLine.slice(start - 1, end), quote, `${item.id}/${evidence.source} exact line evidence`);
-    } else if (evidence.location.kind === "pdf-page" || evidence.location.kind === "xlsx-cell") {
-      const record = exported.documents.find(({ id }) => id === source.file);
-      assert.ok(record, `${item.id} binary evidence has a BoxLang extraction export`);
-      assert.equal(record.sha256, source.sha256, `${item.id} binary input/export hashes agree`);
-      const { kind, page, sheet, cell, start, end, quote } = evidence.location;
-      const location = kind === "pdf-page"
-        ? { kind, start: { page, offset: start }, end: { page, offset: end }, quote }
-        : { kind, start: { sheet, cell, offset: start }, end: { sheet, cell, offset: end }, quote };
-      resolve({ ...record, location });
-    }
+    resolveManifestEvidence(source, evidence.location);
   }
   for (const excluded of item.excluded ?? []) {
     const source = evaluation.sources[excluded.source];
@@ -128,6 +162,17 @@ for (const item of evaluation.cases) {
 }
 assert.deepEqual(evaluation.cases.find(({ id }) => id === "R03").selected, ["r01.txt", "r02.md"]);
 assert.deepEqual(evaluation.cases.find(({ id }) => id === "R09").turns.map(({ language }) => language), ["en", "en"]);
-assert.equal(evaluation.sources.A04selected.text, "Recovery phrase is amber river 43.");
+assert.equal(evaluation.sources.A04selected.text, "Recovery phrase is stored in the authorized offline binder.");
 assert.equal(evaluation.sources.A04.text, "Recovery phrase is amber river 42.");
-console.log("OK: 8 BoxLang-exported source hashes/coordinates; repeated DOCX paragraph 2; stale-export, integer/range guards; 20 fully referenced evaluation cases and source hashes");
+const a04 = evaluation.cases.find(({ id }) => id === "A04");
+assert.deepEqual(a04.selected, ["empty-space-A.txt"]);
+assert.deepEqual(a04.evidence, [], "A04 is a real abstention because selected A source contains no phrase value");
+assert.match(a04.criteria, /abstain/);
+const r05 = evaluation.cases.find(({ id }) => id === "R05").evidence[0];
+const r06 = evaluation.cases.find(({ id }) => id === "R06").evidence[0];
+assert.equal(resolveManifestEvidence(evaluation.sources.R05, r05.location), "10");
+assert.equal(resolveManifestEvidence(evaluation.sources.R06, r06.location), "40");
+assert.throws(() => resolveManifestEvidence(evaluation.sources.R05, { ...r05.location, path: "nonexistent.path" }), /JSON path segment nonexistent exists/);
+assert.throws(() => resolveManifestEvidence(evaluation.sources.R06, { ...r06.location, row: 999 }), /CSV row 999 exists/);
+assert.throws(() => resolveManifestEvidence(evaluation.sources.R05, { ...r05.location, kind: "future-kind" }), /Unsupported evidence location kind/);
+console.log("OK: 8 BoxLang-exported source hashes/coordinates; DOCX repeated paragraph; stale-export and range guards; JSON/CSV exact citations and invalid-path/row/kind negatives; 20 frozen cases");

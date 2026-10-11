@@ -50,7 +50,7 @@
       "id": "r07.xlsx",
       "version": "1",
       "file": "locations.xlsx",
-      "sha256": "954b981418130f67401d2d19c6471e7d8bc398353cdeb8707015685a8c037ba7"
+      "sha256": "cd385cef693805150e011b403d7e62ac1c5030d6c0e614207c520adf0cfd0a2e"
     },
     "R08": {
       "id": "r08.txt",
@@ -179,8 +179,8 @@
     "A04selected": {
       "id": "empty-space-A.txt",
       "version": "1",
-      "text": "Recovery phrase is amber river 43.",
-      "sha256": "c2e557fed3923048e071e80f00bbc0d36806bb17e7c14dff309aa6aa1c489cd2",
+      "text": "Recovery phrase is stored in the authorized offline binder.",
+      "sha256": "63ab02aba90a459d6702f042299e8e84ab2dc8b788bded418a8726ee996c57bb",
       "space": "A"
     },
     "A04": {
@@ -301,6 +301,8 @@
           "location": {
             "kind": "json-path",
             "path": "policy.maxDays",
+            "start": 1,
+            "end": 2,
             "quote": "10"
           }
         }
@@ -321,6 +323,8 @@
             "kind": "csv-cell",
             "row": 3,
             "column": "limit",
+            "start": 1,
+            "end": 2,
             "quote": "40"
           }
         }
@@ -347,7 +351,7 @@
           }
         }
       ],
-      "criteria": "ingest actual XLSX; cite Limits!B2 exact cell value and offsets"
+      "criteria": "Summary is sheet 1 with distractor B2=999; Limits is sheet 2 with B2=250; cite the exact Limits!B2 cell and offsets"
     },
     {
       "id": "R08",
@@ -722,7 +726,7 @@
           }
         }
       ],
-      "criteria": "abstain; no evidence from space B"
+      "criteria": "abstain: selected source says phrase is stored elsewhere and contains no phrase value; do not use near-identical recovery phrase from space B"
     }
   ]
 }

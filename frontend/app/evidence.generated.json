@@ -164,9 +164,9 @@
       }
     },
     {
-      "sha256": "b4c176199aa61a4d2eccd8ad61e71b4adad94b361218f1611447d808b8c019d5",
+      "sha256": "1ad8b91b3116e3f17fc884615aa43b01f7ec6cc5a23a15588ca14d62a5ab600f",
       "locationLabel": "párrafo 2 · offset 1",
-      "content": "Header repeated quote\nExact DOCX target\nExact DOCX target",
+      "content": "Header repeated quote\nExact DOCX & target\nExact DOCX & target",
       "id": "locations.docx",
       "format": "DOCX",
       "rows": [
@@ -175,20 +175,20 @@
           "key": "paragraph1"
         },
         {
-          "text": "Exact DOCX target",
+          "text": "Exact DOCX & target",
           "key": "paragraph2"
         },
         {
-          "text": "Exact DOCX target",
+          "text": "Exact DOCX & target",
           "key": "paragraph3"
         }
       ],
       "version": 1,
       "location": {
-        "quote": "Exact DOCX target",
+        "quote": "Exact DOCX & target",
         "end": {
           "paragraph": 2,
-          "offset": 17
+          "offset": 19
         },
         "kind": "docx-paragraph",
         "start": {
@@ -198,7 +198,7 @@
       }
     },
     {
-      "sha256": "954b981418130f67401d2d19c6471e7d8bc398353cdeb8707015685a8c037ba7",
+      "sha256": "cd385cef693805150e011b403d7e62ac1c5030d6c0e614207c520adf0cfd0a2e",
       "locationLabel": "hoja Limits · celda B2 · offset 1",
       "content": "Limits!A1 = category\nLimits!B1 = limit\nLimits!A2 = travel\nLimits!B2 = 250\nLimits!A3 = repeat target",
       "id": "locations.xlsx",

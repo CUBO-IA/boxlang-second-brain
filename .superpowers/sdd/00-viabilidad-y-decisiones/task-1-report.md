@@ -339,3 +339,74 @@ El último valor de key es un sentinel usado solo en un caso cerrado obligatoria
 ### Decisiones externas y estado final
 
 50 MB/1 MB usan base decimal explícita. Objetivos de indexación por bins y backup cifrado/retención están acordados como propuestas para implementación, no resultados de benchmark ni servicio backup existente. Falta hardware/host/dominio/red para convertirlos en capacidad garantizada; falta key/model endpoint autorizado y tarifa fechada para provider. No hay falla local evitada/re-etiquetada en esta ronda; la única razón restante para no validar real P00.2/00.3 es ausencia de acceso autorizado. P00.5 y manifiesto pasan **para fixtures/representación normalizada local**; no se proclama un parser universal Office o fase 06 aprobada. Sol debe volver a revisar antes de cualquier cambio a Verificada.
+
+## Ronda de corrección 3 — F9/N2, N5–N8
+
+Base confirmada: `51083c9` (`phase00-viability`). Se revisó íntegramente `sol-rereview-2.md`; planes 01–09/verificación preexistentes permanecieron sin seguimiento e intactos. No se ejecutó proveedor/red, no se añadieron dependencias, no se inició fase 01, no se apagaron servicios y no se hizo push/merge. P00 sigue **Bloqueada**.
+
+### Cambios y veredictos
+
+| Finding | Veredicto tras corrección local |
+|---|---|
+| N5 / F9 A04 | Corregido: fuente A autorizada dice `Recovery phrase is stored in the authorized offline binder.` (no contiene la frase/valor); pregunta pide el valor. A04 exige abstenerse, evidence permanece vacío y la fuente casi idéntica de espacio B queda excluida explícitamente. El contrato comprueba la respuesta correcta y no fija el incorrecto `...43`. |
+| N6 / F9 R05–R06 | Corregido: `contracts.mjs` resuelve tipo JSON-path por segmentos existentes y escalar exacto; resuelve CSV por fila/encabezado/columna en la fuente congelada, cita offsets y quote. Negativos de ruta `nonexistent.path`, fila 999 y tipo desconocido fallan. |
+| N7 | Corregido en subconjunto: `EvidenceExtractor` obtiene párrafos, runs, relaciones, celdas y textos XLSX mediante `xmlParse` seguro + `xmlSearch`/`XMLText`; las entidades XML se decodifican por el parser, runs se concatenan en orden. DOCX rechaza tab/break/object/field instructions no soportados; XLSX rechaza fórmulas/celdas/tipos/referencias no soportados. Ya no hay regex que copie XML crudo ni `&amp;` parcial. |
+| N7 límites de celdas | Corregido y probado: rechaza `B0`, referencia faltante, índice shared-string fraccionario y fuera de rango; no omite celdas inválidas con `continue`. Índices deben tener sintaxis entera decimal y estar en límites. |
+| N8 / F9 R07 | Corregido: fixture real XLSX ahora contiene `Summary` como hoja 1 con distractor `B2=999`, y `Limits` como hoja 2 con objetivo `B2=250`. El extractor sigue la relación de workbook, no asume sheet1. Se regeneraron `.xlsx`, `.b64`, hash, manifest y export. |
+| Mantener acreditado | Extraction bx-ai loaders, PDFBox, contratos completos, ubicación y frontend checks pasan. No se retocaron vector/provider/Location ni suites sin motivo; no hubo llamadas de IA. |
+
+El extractor sigue siendo un subconjunto explícito para documentos textuales/estructurados de los fixtures, no un parser universal de Office. Fuentes consultadas: MCP oficial `xmlParse`/`xmlSearch` y XML accessors: <https://boxlang.ortusbooks.com/boxlang-language/reference/built-in-functions/xml/xmlparse>, <https://boxlang.ortusbooks.com/boxlang-language/reference/built-in-functions/xml/xmlsearch>, <https://boxlang.ortusbooks.com/boxlang-language/syntax/xml>.
+
+### Comandos ejecutados y salidas
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec boxlang boxlang tests/extraction.bxs
+OK: MD=bx-ai MarkdownLoader; TXT/code=bx-ai TextLoader; JSON=bx-ai JSONLoader; CSV=bx-ai CSVLoader; PDF=bx-ai PDFLoader + PDFBox page 2 exact citation; DOCX=secure XML tree; escaped ampersand decoded; ordered runs and paragraph 2 citation exact; XLSX=secure XML tree; Summary first/distractor 999, Limits second/target 250; shared-string entities decoded; XLSX rejects B0, missing cell refs, fractional/out-of-range shared indices and unsupported formulas
+```
+
+El mismo comando valida los archivos pequeños `locations-bad-ref.xlsx`, `locations-missing-ref.xlsx`, `locations-fractional-shared.xlsx`, `locations-out-of-range-shared.xlsx`, `locations-formula.xlsx`; son negativos y se espera que la suite termine `OK` tras verificar los rechazos.
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec -T boxlang boxlang tests/export-evidence.bxs > /tmp/opencode/second-brain-round3-export.stdout
+python3 - <<'PY'
+import json
+from pathlib import Path
+lines=Path('/tmp/opencode/second-brain-round3-export.stdout').read_text().splitlines()
+data=json.loads(next(line for line in reversed(lines) if line.startswith('{')))
+Path('frontend/app/evidence.generated.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+for d in data['documents']: print(d['id'],d['location']['start'],repr(d['location']['quote']),d['sha256'])
+PY
+```
+
+```text
+locations.md line 3/1 'repeat phrase' 6e94f4fd7a8865af9c3536129584c094213ddac1d14a3aedb8b266263078a939
+locations.txt line 3/1 'Exact TXT target' d1f4268f5b0c65f20bb0de5f3b2fd152f0facd94401cbab9f2289350ad6d898e
+locations.js line 3/16 'Exact CODE target' 75d709575b3c2195b7adfbe373f92fe6479b78dcd831146f8e4fc0bc91abea01
+locations.jsondata policy.maxDays/1 '10' b502cec39bd90a8b6205dc7cebe66e2087d017a8fb0284b592566bfa1de99703
+locations.csv row 3/1 '40' 156ab85684ab30d3cf84f37544ac276901e726b21dded047bea234abbf937018
+locations.pdf page 2/1 'For urgent purchases, attach prior authorization.' 0a60abb347fab948b25ac7008763d7b7832ac726e50b19de53bc25478a6641f5
+locations.docx paragraph 2/1 'Exact DOCX & target' 1ad8b91b3116e3f17fc884615aa43b01f7ec6cc5a23a15588ca14d62a5ab600f
+locations.xlsx Limits!B2/1 '250' cd385cef693805150e011b403d7e62ac1c5030d6c0e614207c520adf0cfd0a2e
+```
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend node /tests/contracts.mjs
+OK: 8 BoxLang-exported source hashes/coordinates; DOCX repeated paragraph; stale-export and range guards; JSON/CSV exact citations and invalid-path/row/kind negatives; 20 frozen cases
+```
+
+Esto incluye hash `.b64`↔binario, hashes R04/R07, A04 evidencia vacía y fuente excluida, R05/R06 exactas; negativos ejecutan el mismo resolver usado por las verificaciones manifest.
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend pnpm lint
+$ eslint
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend pnpm exec tsc --noEmit
+(exit 0, sin salida)
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend pnpm build
+✓ Compiled successfully; TypeScript finished; static /_not-found and dynamic / generated
+```
+
+Browser puntual en `http://127.0.0.1:3001/`, control nativo real: **DOCX** enseña `paragraph2 = ⟦Exact DOCX & target⟧` y paragraph3 repetido sin marca, label `párrafo 2 · offset 1`; prueba la decodificación y posición. **XLSX** enseña label `hoja Limits · celda B2 · offset 1`, `Limits!B2 = ⟦250⟧`; `Summary` es la hoja 1/distractor (999) y la extracción confirma target desde hoja 2. Interacción seleccionada por teclado usando select (`End` + `Enter`) también conserva la marca XLSX. No se hizo prueba de proveedor ni tráfico fuera de local.
+
+### Estado/commit
+
+La ronda corrige los defectos locales del reporte Sol; no convierte la rúbrica en una evaluación final de fase 06 ni aprueba Office universal. Estado **Bloqueada** hasta clave y tarifas autorizadas para llamadas reales, prueba de modelo/embedding/uso/coste y revisión independiente. Los cambios se guardan en commits estables de esta rama; planes untracked preexistentes siguen fuera del commit. Sin push/merge ni traslado al repositorio original.

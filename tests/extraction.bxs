@@ -35,47 +35,28 @@ try {
 } finally { pdf.close(); }
 checks.append( "PDF=bx-ai PDFLoader + PDFBox page 2 exact citation" );
 
-temp = getTempDirectory() & "p00-fixtures-" & replace( createUUID(), "-", "", "all" );
-directoryCreate( temp );
-try {
-	paragraphValues=extractor.docxParagraphs(root & "locations.docx");
-	if(paragraphValues.len()!=3 || paragraphValues[2]!="Exact DOCX target" || paragraphValues[3]!=paragraphValues[2]) throw(message="Reusable DOCX extractor paragraph ordering/repetition mismatch");
-	cellValues=extractor.xlsxCells(root & "locations.xlsx","Limits");
-	limitCell=cellValues.filter((cell)=>cell.cell=="B2");
-	if(limitCell.len()!=1 || limitCell[1].value!="250") throw(message="Reusable XLSX extractor Limits!B2 mismatch");
-	// Real minimal OOXML ZIP fixtures decoded to writable temp, never the source mount.
-	fileCopy( root & "locations.docx", temp & "/probe.docx" );
-	fileCopy( root & "locations.xlsx", temp & "/probe.xlsx" );
-	zip = createObject( "java", "java.util.zip.ZipFile" ).init( temp & "/probe.docx" );
-	try {
-		scanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "word/document.xml" ) ), "UTF-8" );
-		xml = scanner.useDelimiter( "\\A" ).next();
-		xmlParse( xml, { secureProcessing=true, disallowDoctypeDeclaration=true, allowExternalEntities=false, lenientProcessing=false } );
-		paragraphs = reMatchNoCase( "<w:p[^>]*>.*?</w:p>", xml );
-		paragraph2 = reReplace( reMatchNoCase( "<w:t[^>]*>.*?</w:t>", paragraphs[2] )[1], "<[^>]+>", "", "all" );
-		paragraph3 = reReplace( reMatchNoCase( "<w:t[^>]*>.*?</w:t>", paragraphs[3] )[1], "<[^>]+>", "", "all" );
-		quote = "Exact DOCX target"; offset = find( quote, paragraph2 );
-		if ( paragraph2 != quote || paragraph3 != paragraph2 || offset != 1 || offset + len(quote) - 1 != len(paragraph2) ) throw( message="DOCX paragraph 2/offset/repeated quote mismatch: #paragraph2# / #paragraph3#" );
-	} finally { zip.close(); }
-	checks.append( "DOCX=fixture-scoped OOXML ZIP/XML reader; paragraph 2 exact/repeated" );
+paragraphValues=extractor.docxParagraphs(root & "locations.docx");
+docxQuote="Exact DOCX & target"; docxOffset=find(docxQuote,paragraphValues[2]);
+if(paragraphValues.len()!=3 || paragraphValues[2]!=docxQuote || paragraphValues[3]!=docxQuote || docxOffset!=1 || mid(paragraphValues[2],docxOffset,len(docxQuote))!=docxQuote) throw(message="DOCX entity decoding, run order, paragraph 2 offset or repeated quote mismatch");
+checks.append("DOCX=secure XML tree; escaped ampersand decoded; ordered runs and paragraph 2 citation exact");
 
-	zip = createObject( "java", "java.util.zip.ZipFile" ).init( temp & "/probe.xlsx" );
-	try {
-		workbookScanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "xl/workbook.xml" ) ), "UTF-8" );
-		workbook = workbookScanner.useDelimiter( "\\A" ).next();
-		relationsScanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "xl/_rels/workbook.xml.rels" ) ), "UTF-8" );
-		relations = relationsScanner.useDelimiter( "\\A" ).next();
-		if ( !find( 'name="Limits"', workbook ) || !find( 'r:id="rId1"', workbook ) || !find( 'Target="worksheets/sheet1.xml"', relations ) ) throw( message="XLSX sheet name/relationship does not locate Limits fixture" );
-		scanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "xl/worksheets/sheet1.xml" ) ), "UTF-8" );
-		sheet = scanner.useDelimiter( "\\A" ).next();
-		cell = "<c r=""B2""><v>";
-		at = find( cell, sheet );
-		value = mid( sheet, at + len( cell ), 3 );
-		if ( at == 0 || value != "250" || find("250", mid(sheet,at+len(cell),20)) != 1 ) throw( message="XLSX Limits!B2 exact cell/offset mismatch" );
-	} finally { zip.close(); }
-	checks.append( "XLSX=fixture-scoped OOXML ZIP/XML reader; Limits!B2=250" );
-} finally {
-	directoryDelete( temp, true );
+cellValues=extractor.xlsxCells(root & "locations.xlsx","Limits");
+limitCell=cellValues.filter((cell)=>cell.cell=="B2");
+if(limitCell.len()!=1 || limitCell[1].value!="250") throw(message="Second-sheet Limits!B2 mismatch");
+summaryValues=extractor.xlsxCells(root & "locations.xlsx","Summary");
+summaryText=summaryValues.filter((cell)=>cell.cell=="A1"); summaryDistractor=summaryValues.filter((cell)=>cell.cell=="B2");
+if(summaryText.len()!=1 || summaryText[1].value!="Summary & policy" || summaryDistractor.len()!=1 || summaryDistractor[1].value!="999") throw(message="XLSX shared-string entity or first-sheet distractor mismatch");
+checks.append("XLSX=secure XML tree; Summary first/distractor 999, Limits second/target 250; shared-string entities decoded");
+
+function assertExtractorRejects(required string fixture, required string expected){
+	try { extractor.xlsxCells(root & arguments.fixture,"Limits"); throw(message="Accepted malformed XLSX #arguments.fixture#"); }
+	catch(any failure){ if(!findNoCase(arguments.expected,failure.message)) rethrow; }
 }
+assertExtractorRejects("locations-bad-ref.xlsx","Invalid XLSX cell reference");
+assertExtractorRejects("locations-missing-ref.xlsx","Invalid XLSX cell reference");
+assertExtractorRejects("locations-fractional-shared.xlsx","Invalid XLSX shared string index");
+assertExtractorRejects("locations-out-of-range-shared.xlsx","out of bounds");
+assertExtractorRejects("locations-formula.xlsx","outside the supported subset");
+checks.append("XLSX rejects B0, missing cell refs, fractional/out-of-range shared indices and unsupported formulas");
 
 println( "OK: " & checks.toList( "; " ) );

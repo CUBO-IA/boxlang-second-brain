@@ -1,32 +1,29 @@
-/** Bounded local readers for PDF and OOXML; no archive paths are extracted. */
+/** Bounded local PDF/OOXML readers. Office support is intentionally a subset. */
 class {
 	property name="maxFileBytes" type="numeric" default=50000000;
 	property name="maxXmlBytes" type="numeric" default=1000000;
 	property name="maxZipEntries" type="numeric" default=10000;
 
 	function init(numeric maxFileBytes=50000000) {
-		if ( arguments.maxFileBytes < 1 || arguments.maxFileBytes > 50000000 ) throw(message="maxFileBytes must be in 1..50,000,000");
+		if(arguments.maxFileBytes<1 || arguments.maxFileBytes>50000000) throw(message="maxFileBytes must be in 1..50,000,000");
 		variables.maxFileBytes=arguments.maxFileBytes;
 		return this;
 	}
 
 	private void function checkFile(required string path) {
-		if ( !fileExists(arguments.path) ) throw(message="Extraction source does not exist: #arguments.path#");
-		var source=createObject("java","java.io.File").init(arguments.path);
-		if ( source.length() > variables.maxFileBytes ) throw(message="Extraction source exceeds #variables.maxFileBytes# bytes");
+		if(!fileExists(arguments.path)) throw(message="Extraction source does not exist: #arguments.path#");
+		if(createObject("java","java.io.File").init(arguments.path).length()>variables.maxFileBytes) throw(message="Extraction source exceeds #variables.maxFileBytes# bytes");
 	}
 
-	private string function zipXml(required any archive, required string entryName) {
+	private any function zipXml(required any archive, required string entryName) {
 		var entry=arguments.archive.getEntry(arguments.entryName);
-		if ( isNull(entry) ) throw(message="OOXML part missing: #arguments.entryName#");
-		if ( entry.getSize() < 0 || entry.getSize() > variables.maxXmlBytes ) throw(message="OOXML part exceeds #variables.maxXmlBytes# bytes: #arguments.entryName#");
+		if(isNull(entry)) throw(message="OOXML part missing: #arguments.entryName#");
+		if(entry.getSize()<0 || entry.getSize()>variables.maxXmlBytes) throw(message="OOXML part exceeds #variables.maxXmlBytes# bytes: #arguments.entryName#");
 		var stream=arguments.archive.getInputStream(entry);
 		var bytes=stream.readNBytes(variables.maxXmlBytes+1);
 		stream.close();
 		if(bytes.length>variables.maxXmlBytes) throw(message="OOXML part exceeds actual read limit: #arguments.entryName#");
-		var xml=createObject("java","java.lang.String").init(bytes,"UTF-8");
-		xmlParse(xml,{secureProcessing=true,disallowDoctypeDeclaration=true,allowExternalEntities=false,lenientProcessing=false});
-		return xml;
+		return xmlParse(createObject("java","java.lang.String").init(bytes,"UTF-8"),{secureProcessing=true,disallowDoctypeDeclaration=true,allowExternalEntities=false,lenientProcessing=false});
 	}
 
 	array function pdfPages(required string path) {
@@ -36,8 +33,7 @@ class {
 		try {
 			var stripper=createObject("java","org.apache.pdfbox.text.PDFTextStripper").init();
 			for(var page=1;page<=pdf.getNumberOfPages();page++) {
-				stripper.setStartPage(page); stripper.setEndPage(page);
-				pages.append(trim(stripper.getText(pdf)));
+				stripper.setStartPage(page); stripper.setEndPage(page); pages.append(trim(stripper.getText(pdf)));
 			}
 		} finally { pdf.close(); }
 		return pages;
@@ -48,13 +44,12 @@ class {
 		var archive=createObject("java","java.util.zip.ZipFile").init(arguments.path);
 		try {
 			if(archive.size()>variables.maxZipEntries) throw(message="OOXML archive exceeds #variables.maxZipEntries# entries");
-			var xml=zipXml(archive,"word/document.xml");
-			var paragraphs=reMatchNoCase("<w:p[^>]*>.*?</w:p>",xml);
+			var document=zipXml(archive,"word/document.xml");
+			if(!xmlSearch(document,"//*[local-name()='tab' or local-name()='br' or local-name()='drawing' or local-name()='object' or local-name()='instrText']").isEmpty()) throw(message="DOCX tabs, breaks, objects and field instructions are outside the supported subset");
 			var output=[];
-			for(var paragraph in paragraphs) {
-				var runs=reMatchNoCase("<w:t[^>]*>.*?</w:t>",paragraph);
+			for(var paragraph in xmlSearch(document,"//*[local-name()='p']")) {
 				var text="";
-				for(var run in runs) text &= reReplace(reReplace(run,"^<w:t[^>]*>",""),"</w:t>$","");
+				for(var run in xmlSearch(paragraph,".//*[local-name()='t']")) text &= run.XMLText;
 				output.append(text);
 			}
 			if(output.isEmpty()) throw(message="DOCX contains no readable paragraphs");
@@ -70,42 +65,49 @@ class {
 			if(archive.size()>variables.maxZipEntries) throw(message="OOXML archive exceeds #variables.maxZipEntries# entries");
 			var workbook=zipXml(archive,"xl/workbook.xml");
 			var relations=zipXml(archive,"xl/_rels/workbook.xml.rels");
-			var sheetTag=reMatchNoCase("<sheet[^>]*name=""#arguments.sheetName#""[^>]*/?>",workbook);
-			if(sheetTag.isEmpty()) throw(message="XLSX sheet not found: #arguments.sheetName#");
-			var relIdMatch=reMatchNoCase("r:id=""[^""]+""",sheetTag[1]);
-			if(relIdMatch.isEmpty()) throw(message="XLSX sheet has no relationship id: #arguments.sheetName#");
-			var relId=replace(replace(relIdMatch[1],'r:id="',''),'"','');
-			var relTag=reMatchNoCase("<Relationship[^>]*Id=""#relId#""[^>]*/?>",relations);
-			if(relTag.isEmpty()) throw(message="XLSX sheet relationship missing: #relId#");
-			var targetMatch=reMatchNoCase("Target=""[^""]+""",relTag[1]);
-			if(targetMatch.isEmpty()) throw(message="XLSX relationship has no target: #relId#");
-			var target=replace(replace(targetMatch[1],'Target="',''),'"','');
+			var sheets=xmlSearch(workbook,"//*[local-name()='sheet']");
+			var sheet=null;
+			for(var candidate in sheets) if(candidate.XMLAttributes.name==arguments.sheetName) sheet=candidate;
+			if(isNull(sheet)) throw(message="XLSX sheet not found: #arguments.sheetName#");
+			var attrs=sheet.XMLAttributes;
+			if(!structKeyExists(attrs,"r:id")) throw(message="XLSX sheet has no relationship id: #arguments.sheetName#");
+			var relation=null;
+			for(var candidate in xmlSearch(relations,"//*[local-name()='Relationship']")) if(candidate.XMLAttributes.Id==attrs["r:id"]) relation=candidate;
+			if(isNull(relation) || !structKeyExists(relation.XMLAttributes,"Target")) throw(message="XLSX sheet relationship missing target");
+			var target=relation.XMLAttributes.Target;
 			if(find("..",target) || find(":",target) || left(target,1)=="/") throw(message="Unsafe XLSX worksheet relationship target");
-			var sheetEntry="xl/#target#";
-			if(left(target,3)=="xl/") sheetEntry=target;
+			var sheetEntry=left(target,3)=="xl/" ? target : "xl/#target#";
 			if(left(sheetEntry,14)!="xl/worksheets/" || right(sheetEntry,4)!=".xml" || find("/",mid(sheetEntry,15,len(sheetEntry)-18))) throw(message="Unsupported XLSX worksheet target: #sheetEntry#");
 			var sheetXml=zipXml(archive,sheetEntry);
 			var shared=[];
 			if(!isNull(archive.getEntry("xl/sharedStrings.xml"))) {
-				var sharedXml=zipXml(archive,"xl/sharedStrings.xml");
-				for(var item in reMatchNoCase("<si[^>]*>.*?</si>",sharedXml)) shared.append(reReplace(reReplace(item,"<[^>]+>","","all"),"&amp;","&","all"));
+				var sharedDocument=zipXml(archive,"xl/sharedStrings.xml");
+				for(var item in xmlSearch(sharedDocument,"//*[local-name()='si']")) {
+					var sharedText="";
+					for(var textNode in xmlSearch(item,".//*[local-name()='t']")) sharedText &= textNode.XMLText;
+					shared.append(sharedText);
+				}
 			}
 			var cells=[];
-			for(var cellXml in reMatchNoCase("<c[^>]*>.*?</c>",sheetXml)) {
-				var refMatch=reMatchNoCase("r=""[A-Z]+[0-9]+""",cellXml);
-				if(refMatch.isEmpty()) continue;
-				var cellRef=replace(replace(refMatch[1],'r="',''),'"','');
+			for(var cell in xmlSearch(sheetXml,"//*[local-name()='c']")) {
+				var cellAttributes=cell.XMLAttributes;
+				if(!structKeyExists(cellAttributes,"r") || !reFind("^[A-Z]{1,3}[1-9][0-9]*$",cellAttributes.r)) throw(message="Invalid XLSX cell reference");
+				var ref=cellAttributes.r;
+				if(xmlSearch(cell,"./*[local-name()='f']").len()) throw(message="XLSX formulas are outside the supported subset at #ref#");
+				var type=cellAttributes.t ?: "n";
+				var valueNodes=xmlSearch(cell,"./*[local-name()='v']");
 				var value="";
-				var valueMatch=reMatchNoCase("<v>.*?</v>",cellXml);
-				var inlineMatch=reMatchNoCase("<t[^>]*>.*?</t>",cellXml);
-				if(!valueMatch.isEmpty()) value=reReplace(valueMatch[1],"<[^>]+>","","all");
-				else if(!inlineMatch.isEmpty()) value=reReplace(inlineMatch[1],"<[^>]+>","","all");
-				if(find('t="s"',cellXml)) {
-					var sharedIndex=val(value)+1;
-					if(sharedIndex<1 || sharedIndex>shared.len()) throw(message="XLSX shared string index invalid at #cellRef#");
-					value=shared[sharedIndex];
+				if(type=="inlineStr") {
+					for(var inlineText in xmlSearch(cell,".//*[local-name()='is']/*[local-name()='t']")) value &= inlineText.XMLText;
+				} else if(!valueNodes.isEmpty()) value=valueNodes[1].XMLText;
+				else if(type!="n" && type!="b" && type!="e" && type!="str") throw(message="Unsupported XLSX cell type #type# at #ref#");
+				if(type=="s") {
+					if(!reFind("^(0|[1-9][0-9]*)$",value)) throw(message="Invalid XLSX shared string index at #ref#");
+					var index=val(value)+1;
+					if(index<1 || index>shared.len()) throw(message="XLSX shared string index out of bounds at #ref#");
+					value=shared[index];
 				}
-				cells.append({sheet=arguments.sheetName,cell=cellRef,value=value});
+				cells.append({sheet=arguments.sheetName,cell=ref,value=value});
 			}
 			if(cells.isEmpty()) throw(message="XLSX sheet contains no readable cells: #arguments.sheetName#");
 			return cells;
