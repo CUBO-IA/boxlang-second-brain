@@ -9,6 +9,11 @@ valid = new Location( { kind="line", start={ line=2, offset=5 }, end={ line=2, o
 if ( valid.toStruct().start.line != 2 ) throw( message="Valid line citation rejected" );
 if ( !rejectsLocation( { kind="line", start={ line=-1, offset=1 }, end={ line=-1, offset=13 }, quote="repeat phrase" } ) ) throw( message="Negative line accepted" );
 if ( !rejectsLocation( { kind="line", start={ line=2, offset=8 }, end={ line=2, offset=4 }, quote="bad" } ) ) throw( message="Reversed line range accepted" );
+if ( !rejectsLocation( { kind="line", start={ line=2.5, offset=1 }, end={ line=2.5, offset=13 }, quote="repeat phrase" } ) ) throw( message="Fractional line accepted" );
+if ( !rejectsLocation( { kind="line", start={ line=2, offset=1.5 }, end={ line=2, offset=13.5 }, quote="repeat phrase" } ) ) throw( message="Fractional offsets accepted" );
+if ( !rejectsLocation( { kind="line", start={ line=3, offset=1 }, end={ line=2, offset=13 }, quote="repeat phrase" } ) ) throw( message="End on previous line accepted" );
+if ( !rejectsLocation( { kind="pdf-page", start={ page=2.5, offset=1 }, end={ page=2.5, offset=3 }, quote="abc" } ) ) throw( message="Fractional PDF page accepted" );
+if ( !rejectsLocation( { kind="csv-cell", start={ row=3.5, column="limit", offset=1 }, end={ row=3.5, column="limit", offset=2 }, quote="40" } ) ) throw( message="Fractional CSV row accepted" );
 if ( !rejectsLocation( { kind="unknown", start={ x=1 }, end={ x=1 }, quote="bad" } ) ) throw( message="Unknown kind accepted" );
 if ( !rejectsLocation( { kind="xlsx-cell", start={ sheet="Limits", cell="B0" }, end={ sheet="Limits", cell="B0" }, quote="0" } ) ) throw( message="Invalid spreadsheet cell accepted" );
 println( "OK: Location validates supported kind, positive coordinates, ordered range and exact quote length" );

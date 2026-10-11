@@ -66,13 +66,13 @@ Resultados, comandos, versiones, decisiones propuestas y bloqueos: [informe Task
 
 | Área | Decisión provisional | Límite/recuperación |
 |---|---|---|
-| Ingesta | 20 archivos por operación; 50 MiB/archivo (límite acordado); 100 MiB de texto extraído total; rechazar, no truncar | ZIP/archivos comprimidos no admitidos en esta fase; si se habilitan, máximo 100 MiB expandidos y 10.000 entradas |
-| Fragmentos | 8.000 caracteres máximo, 400 de solape, máximo 500 por documento | Fallar y conservar la versión vigente si excede; sin publicación parcial |
+| Ingesta | 20 archivos/operación; 50 MB = 50,000,000 bytes/archivo; máximo total 100 MB = 100,000,000 bytes de UTF-8 extraído. No truncar | Rechazar comprimidos en fase 00; si se habilitan, máximo 100 MB = 100,000,000 bytes expandidos y 10,000 entradas. Límites futuros a validar con cargas reales |
+| Fragmentos | Máximo 8,000 Unicode code points, solape 400 code points, máximo 500 fragmentos/documento | Fallar y conservar versión vigente si excede; sin publicación parcial |
 | Tareas | Tabla PostgreSQL futura como registro durable, lease 60 s con heartbeat cada 15 s; sin cola adicional | 3 intentos automáticos con backoff 1/5/15 min; reintento manual posterior. Fence por versionId impide publicar trabajo obsoleto |
 | Original + DB | Versiones inmutables y estados `staging → stored → ready`; `ready` solo tras rename atómico y hash coincidente | Al reinicio reconciliar `stored`: staging existente se renombra; destino con hash esperado se promueve a `ready`; archivo ausente/mismatch falla nueva versión y retiene la ready anterior. Temporales huérfanos >24 h se eliminan. Borrado marca tombstone, elimina derivados/original y se reanuda idempotentemente |
 | IA | USD 20/día UTC, según especificación | Reserva atómica concurrente antes de llamada; liquidar con uso real; ante uso desconocido retener reserva hasta conciliación; detener al agotar. Tarifas del modelo con fecha son requisito de configuración: sin tarifa no llamar ni estimar |
-| Operación | Solo acceso privado tras proxy TLS/HTTPS; puertos de Compose no públicos | Backup diario coordinado de snapshot PostgreSQL + manifiesto/hash de originales inmutables. Defaults de recuperación RPO 24 h/RTO 4 h, sujetos a prueba de restore |
-| Carga | Caso reproducible: 1.000 docs/espacio, 30 sesiones concurrentes, texto de 1 MiB y archivos de hasta 50 MiB; registrar tamaño y proveedor | Medir p95 de preguntas ≤30 s e indexado de texto 1 MiB ≤60 s. Hardware, dominio, conexión y topología siguen desconocidos; no afirmar que esos objetivos se cumplen |
+| Operación/backups | Acceso privado tras TLS; backup diario consistente de PostgreSQL + manifiesto/hash + originales inmutables; cifrado AES-256-GCM antes de salir del volumen | Retención propuesta: 7 diarios, 4 semanales, 12 mensuales. Clave de cifrado fuera del repo/en gestor de secretos; restore conjunto trimestral. RPO 24 h/RTO 4 h propuestos, no medidos |
+| Carga | 1,000 docs/espacio; 30 sesiones concurrentes; muestra de texto de 1 MB = 1,000,000 bytes y archivo máximo 50 MB = 50,000,000 bytes | Objetivo p95 pregunta ≤30 s; indexación de 1 MB ≤60 s. Archivos 1–10 MB ≤2 min; >10–25 MB ≤5 min; >25–50 MB ≤10 min. Registrar bins 1/2/5/10/25/50 MB, CPU/RAM, conexión y proveedor. Son objetivos candidatos, no medidos; hardware/host/dominio siguen desconocidos |
 
 Estos valores son defaults de diseño para revisar antes de producción, no resultados experimentales ni capacidades ya implementadas. El hostname/dominio, recursos del servidor y tarifas no se inventan en fase 00.
 

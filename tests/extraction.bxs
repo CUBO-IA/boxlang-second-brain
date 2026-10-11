@@ -1,8 +1,10 @@
 // Real fixture smoke for bx-ai's installed loaders. OOXML checks below are
 // deliberately fixture-scoped because premium bx-word/bx-spreadsheet loaders
 // are not installed in this environment.
+import secondBrain.EvidenceExtractor;
 root = "/modules/second-brain/tests/fixtures/";
 checks = [];
+extractor = new EvidenceExtractor();
 markdown = new bxModules.bxai.models.loaders.MarkdownLoader( root & "locations.md" ).doLoad()[ 1 ].getContent();
 markdownLines = listToArray( markdown, char( 10 ), true );
 if ( markdownLines[ 2 ] != "repeat phrase" || markdownLines[ 3 ] != markdownLines[ 2 ] ) throw( message="bx-ai MarkdownLoader line 3/repeated citation mismatch" );
@@ -20,30 +22,40 @@ csvText = new bxModules.bxai.models.loaders.CSVLoader( root & "locations.csv" ).
 if ( !findNoCase( "meals", csvText ) || !findNoCase( "40", csvText ) ) throw( message="bx-ai CSVLoader row/column values missing: #csvText#" );
 checks.append( "CSV=bx-ai CSVLoader" );
 pdfContent = new bxModules.bxai.models.loaders.PDFLoader( root & "locations.pdf" ).doLoad()[ 1 ].getContent();
-if ( !findNoCase( "Page one intro", pdfContent ) || !findNoCase( "Exact PDF target", pdfContent ) ) throw( message="bx-ai PDFLoader failed to extract fixture" );
+if ( !findNoCase( "General purchase policy.", pdfContent ) || !findNoCase( "For urgent purchases, attach prior authorization.", pdfContent ) ) throw( message="bx-ai PDFLoader failed to extract fixture" );
+extractedPages = extractor.pdfPages(root & "locations.pdf");
+if ( extractedPages.len()!=2 || extractedPages[2]!="For urgent purchases, attach prior authorization." ) throw(message="Reusable PDF extraction differs from page citation");
 pdf = createObject( "java", "org.apache.pdfbox.Loader" ).loadPDF( createObject( "java", "java.io.File" ).init( root & "locations.pdf" ) );
 try {
 	stripper = createObject( "java", "org.apache.pdfbox.text.PDFTextStripper" ).init();
 	stripper.setStartPage( 2 ); stripper.setEndPage( 2 );
 	page2 = stripper.getText( pdf );
-	if ( !findNoCase( "Exact PDF target", page2 ) || findNoCase( "Page one intro", page2 ) ) throw( message="PDF page coordinate does not resolve exact citation" );
+	quote = "For urgent purchases, attach prior authorization.";
+	if ( !findNoCase( quote, page2 ) || findNoCase( "General purchase policy.", page2 ) || find( quote, page2 ) != 1 ) throw( message="PDF page/offset coordinate does not resolve exact citation" );
 } finally { pdf.close(); }
 checks.append( "PDF=bx-ai PDFLoader + PDFBox page 2 exact citation" );
 
 temp = getTempDirectory() & "p00-fixtures-" & replace( createUUID(), "-", "", "all" );
 directoryCreate( temp );
 try {
+	paragraphValues=extractor.docxParagraphs(root & "locations.docx");
+	if(paragraphValues.len()!=3 || paragraphValues[2]!="Exact DOCX target" || paragraphValues[3]!=paragraphValues[2]) throw(message="Reusable DOCX extractor paragraph ordering/repetition mismatch");
+	cellValues=extractor.xlsxCells(root & "locations.xlsx","Limits");
+	limitCell=cellValues.filter((cell)=>cell.cell=="B2");
+	if(limitCell.len()!=1 || limitCell[1].value!="250") throw(message="Reusable XLSX extractor Limits!B2 mismatch");
 	// Real minimal OOXML ZIP fixtures decoded to writable temp, never the source mount.
-	fileWrite( temp & "/probe.docx", binaryDecode( fileRead( root & "locations.docx.b64" ), "base64" ) );
-	fileWrite( temp & "/probe.xlsx", binaryDecode( fileRead( root & "locations.xlsx.b64" ), "base64" ) );
+	fileCopy( root & "locations.docx", temp & "/probe.docx" );
+	fileCopy( root & "locations.xlsx", temp & "/probe.xlsx" );
 	zip = createObject( "java", "java.util.zip.ZipFile" ).init( temp & "/probe.docx" );
 	try {
 		scanner = createObject( "java", "java.util.Scanner" ).init( zip.getInputStream( zip.getEntry( "word/document.xml" ) ), "UTF-8" );
 		xml = scanner.useDelimiter( "\\A" ).next();
-		parts = createObject( "java", "java.util.Arrays" ).asList( xml.split( "</w:p>" ) );
-		paragraph2 = reReplace( parts.get( 1 ), "<[^>]+>", "", "all" );
-		paragraph3 = reReplace( parts.get( 2 ), "<[^>]+>", "", "all" );
-		if ( paragraph2 != "Exact DOCX target" || paragraph3 != paragraph2 ) throw( message="DOCX paragraph coordinate/repeated quote mismatch: #paragraph2# / #paragraph3#" );
+		xmlParse( xml, { secureProcessing=true, disallowDoctypeDeclaration=true, allowExternalEntities=false, lenientProcessing=false } );
+		paragraphs = reMatchNoCase( "<w:p[^>]*>.*?</w:p>", xml );
+		paragraph2 = reReplace( reMatchNoCase( "<w:t[^>]*>.*?</w:t>", paragraphs[2] )[1], "<[^>]+>", "", "all" );
+		paragraph3 = reReplace( reMatchNoCase( "<w:t[^>]*>.*?</w:t>", paragraphs[3] )[1], "<[^>]+>", "", "all" );
+		quote = "Exact DOCX target"; offset = find( quote, paragraph2 );
+		if ( paragraph2 != quote || paragraph3 != paragraph2 || offset != 1 || offset + len(quote) - 1 != len(paragraph2) ) throw( message="DOCX paragraph 2/offset/repeated quote mismatch: #paragraph2# / #paragraph3#" );
 	} finally { zip.close(); }
 	checks.append( "DOCX=fixture-scoped OOXML ZIP/XML reader; paragraph 2 exact/repeated" );
 
@@ -59,7 +71,7 @@ try {
 		cell = "<c r=""B2""><v>";
 		at = find( cell, sheet );
 		value = mid( sheet, at + len( cell ), 3 );
-		if ( at == 0 || value != "250" ) throw( message="XLSX Limits!B2 exact cell mismatch" );
+		if ( at == 0 || value != "250" || find("250", mid(sheet,at+len(cell),20)) != 1 ) throw( message="XLSX Limits!B2 exact cell/offset mismatch" );
 	} finally { zip.close(); }
 	checks.append( "XLSX=fixture-scoped OOXML ZIP/XML reader; Limits!B2=250" );
 } finally {

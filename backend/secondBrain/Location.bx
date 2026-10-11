@@ -10,23 +10,24 @@ class Location {
 		if ( ![ "line", "json-path", "csv-cell", "xlsx-cell", "pdf-page", "docx-paragraph" ].contains( arguments.value.kind ) || !len( arguments.value.quote ) ) throw( message="Unsupported location kind or empty quote" );
 		var start = arguments.value.start;
 		var end = arguments.value.end;
+		var integer = ( value ) => isNumeric( value ) && value == fix( value );
 		switch ( arguments.value.kind ) {
 			case "line":
 			case "docx-paragraph":
 				var key = arguments.value.kind == "line" ? "line" : "paragraph";
-				if ( !start.keyExists( key ) || !end.keyExists( key ) || start[ key ] < 1 || end[ key ] != start[ key ] || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid line/paragraph range" );
+				if ( !start.keyExists( key ) || !end.keyExists( key ) || !integer( start[ key ] ) || !integer( end[ key ] ) || start[ key ] < 1 || end[ key ] != start[ key ] || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || !integer( start.offset ) || !integer( end.offset ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid line/paragraph range" );
 				break;
 			case "json-path":
-				if ( !start.keyExists( "path" ) || !end.keyExists( "path" ) || !len( start.path ) || start.path != end.path ) throw( message="Invalid JSON path" );
+				if ( !start.keyExists( "path" ) || !end.keyExists( "path" ) || !len( start.path ) || start.path != end.path || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || !integer( start.offset ) || !integer( end.offset ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid JSON path range" );
 				break;
 			case "csv-cell":
-				if ( !start.keyExists( "row" ) || !start.keyExists( "column" ) || start.row < 1 || !len( start.column ) || start.row != end.row || start.column != end.column ) throw( message="Invalid CSV cell" );
+				if ( !start.keyExists( "row" ) || !start.keyExists( "column" ) || !integer( start.row ) || start.row < 1 || !len( start.column ) || start.row != end.row || start.column != end.column || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || !integer( start.offset ) || !integer( end.offset ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid CSV cell range" );
 				break;
 			case "xlsx-cell":
-				if ( !start.keyExists( "sheet" ) || !start.keyExists( "cell" ) || !len( start.sheet ) || !reFind( "^[A-Z]+[1-9][0-9]*$", start.cell ) || start.sheet != end.sheet || start.cell != end.cell ) throw( message="Invalid XLSX cell" );
+				if ( !start.keyExists( "sheet" ) || !start.keyExists( "cell" ) || !len( start.sheet ) || !reFind( "^[A-Z]+[1-9][0-9]*$", start.cell ) || start.sheet != end.sheet || start.cell != end.cell || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || !integer( start.offset ) || !integer( end.offset ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid XLSX cell range" );
 				break;
 			case "pdf-page":
-				if ( !start.keyExists( "page" ) || !end.keyExists( "page" ) || start.page < 1 || end.page != start.page ) throw( message="Invalid PDF page" );
+				if ( !start.keyExists( "page" ) || !end.keyExists( "page" ) || !integer( start.page ) || !integer( end.page ) || start.page < 1 || end.page != start.page || !start.keyExists( "offset" ) || !end.keyExists( "offset" ) || !integer( start.offset ) || !integer( end.offset ) || start.offset < 1 || end.offset < start.offset || end.offset - start.offset + 1 != len( arguments.value.quote ) ) throw( message="Invalid PDF page range" );
 				break;
 		}
 		variables.kind = arguments.value.kind;

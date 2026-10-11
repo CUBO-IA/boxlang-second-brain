@@ -1,40 +1,59 @@
-// One request per probe, no retries. Calls require explicit opt-in, a key,
-// caller-supplied current price rates, and a hard combined ceiling <= USD 1.
+// Opt-in only. No fallback, retries, sentinel key, or request without dated rates.
 env = server.system.environment;
-if ( ( env.P00_ALLOW_PROVIDER_CALLS ?: "" ) != "YES" ) {
-	println( "BLOCKED: opt in with P00_ALLOW_PROVIDER_CALLS=YES; no provider request made" );
+recordPath = env.P00_PROVIDER_RECORD_PATH ?: "/tmp/second-brain-provider-probe.ndjson";
+function record( required struct event ) {
+	var line = jsonSerialize( arguments.event );
+	fileAppend( recordPath, line & char(10), "utf-8" );
+	println( line );
+}
+function blocked( required string reason ) {
+	record( { status="BLOCKED", passed=false, requestsMade=0, reason=arguments.reason } );
+}
+
+if ( ( env.P00_ALLOW_PROVIDER_CALLS ?: "" ) != "YES" ) { blocked("P00_ALLOW_PROVIDER_CALLS must equal YES"); abort; }
+key = env.OPENAI_API_KEY ?: "";
+if ( !len(key) ) { blocked("OPENAI_API_KEY absent"); abort; }
+priceDate = env.P00_PRICE_DATE ?: "";
+priceReference = env.P00_PRICE_REFERENCE ?: "";
+if ( !reFind("^20[0-9]{2}-[0-9]{2}-[0-9]{2}$",priceDate) || !len(priceReference) ) { blocked("Require P00_PRICE_DATE (YYYY-MM-DD) and P00_PRICE_REFERENCE; no current tariff assumed"); abort; }
+ceiling = val(env.P00_MAX_USD ?: 0);
+chatInRate = val(env.P00_CHAT_INPUT_USD_PER_MILLION ?: 0);
+chatOutRate = val(env.P00_CHAT_OUTPUT_USD_PER_MILLION ?: 0);
+embeddingRate = val(env.P00_EMBED_USD_PER_MILLION ?: 0);
+if ( ceiling <= 0 || ceiling > 1 || chatInRate <= 0 || chatOutRate <= 0 || embeddingRate <= 0 ) { blocked("Require USD ceiling in (0,1] and positive caller-supplied USD/M-token rates"); abort; }
+estimatedMaxUSD = (64*chatInRate + 32*chatOutRate + 64*embeddingRate)/1000000;
+if ( estimatedMaxUSD > ceiling ) { blocked("Conservative combined estimate exceeds configured ceiling"); abort; }
+
+config = { provider="openai", chatModel="gpt-6-luna", embeddingModel="text-embedding-3-small", chatEndpoint="/v1/chat/completions", embeddingEndpoint="/v1/embeddings", timeoutSeconds=30, retries=0, maxCompletionTokens=32, priceDate=priceDate, priceReference=priceReference, ratesUSDPerMillion={chatInput=chatInRate,chatOutput=chatOutRate,embeddingInput=embeddingRate}, ceilingUSD=ceiling, estimatedMaximumUSD=estimatedMaxUSD };
+startedAt = now();
+try {
+	chat = aiChat("Reply with exactly: P00_PROVIDER_PROBE_OK",{model=config.chatModel,max_completion_tokens=config.maxCompletionTokens},{provider=config.provider,apiKey=key,timeout=config.timeoutSeconds,returnFormat="raw",logRequest=false,logResponse=false});
+	chatUsage = chat.usage ?: {};
+	chatCost = structKeyExists(chatUsage,"prompt_tokens") && structKeyExists(chatUsage,"completion_tokens") ? (chatUsage.prompt_tokens*chatInRate + chatUsage.completion_tokens*chatOutRate)/1000000 : javacast("null","");
+	record({status="OBSERVED",operation="chat",passed=false,requestsMade=1,model=config.chatModel,endpoint=config.chatEndpoint,response=chat.choices[1].message.content,usage=chatUsage,usageCostEstimateUSD=chatCost,config=config,recordedAt=now()});
+} catch(any error) {
+	record({status="ERROR",operation="chat",passed=false,requestsMade=1,error=error.message ?: "provider error",config=config,recordedAt=now()});
 	abort;
 }
-if ( !( env.OPENAI_API_KEY ?: "" ).len() ) {
-	println( "BLOCKED: OPENAI_API_KEY absent; no provider request made" );
+
+try {
+	embedding = aiEmbed("synthetic phase zero embedding probe",{model=config.embeddingModel},{provider=config.provider,apiKey=key,timeout=config.timeoutSeconds,returnFormat="raw",logRequest=false,logResponse=false});
+	embeddingUsage = embedding.usage ?: {};
+	vector = embedding.data[1].embedding;
+	embeddingCost = structKeyExists(embeddingUsage,"prompt_tokens") ? (embeddingUsage.prompt_tokens*embeddingRate)/1000000 : javacast("null","");
+	record({status="OBSERVED",operation="embedding",passed=false,requestsMade=1,model=config.embeddingModel,dimensions=vector.len(),embedding=vector,usage=embeddingUsage,usageCostEstimateUSD=embeddingCost,config=config,recordedAt=now()});
+	if(vector.len()!=1536) throw(message="Expected 1536 dimensions, observed #vector.len()#");
+	table="p00_provider_" & lCase(replace(createUUID(),"-","","all"));
+	memory=new bxModules.bxai.models.memory.vector.PostgresVectorMemory(collection=table);
+	try {
+		memory.configure({datasource="secondBrain",table=table,collection=table,dimensions=1536,distanceFunction="COSINE",indexType="HNSW"});
+		memory.storeDocument("provider-roundtrip","synthetic provider embedding",vector,{spaceId="P00",documentId="roundtrip",probe="provider"});
+		found=memory.findSimilar(vector,1,{spaceId="P00",documentId="roundtrip"});
+		if(found.len()!=1 || found[1].id!="provider-roundtrip" || found[1].embedding.len()!=1536) throw(message="Provider vector pgvector roundtrip did not return 1,536 dimensions");
+		for(dimension=1;dimension<=1536;dimension++) if(abs(found[1].embedding[dimension]-vector[dimension])>0.000001) throw(message="Provider vector pgvector changed dimension #dimension#");
+	} finally { queryExecute("DROP TABLE IF EXISTS #table#",{}, {datasource="secondBrain"}); }
+	record({status="PASS",operation="embedding-pgvector-roundtrip",passed=true,requestsMade=0,model=config.embeddingModel,dimensions=vector.len(),resultCount=found.len(),usageCostEstimateUSD=(isNull(chatCost)||isNull(embeddingCost)?javacast("null",""):chatCost+embeddingCost),config=config,recordedAt=now()});
+} catch(any error) {
+	record({status="ERROR",operation="embedding-or-roundtrip",passed=false,requestsMade=1,error=error.message ?: "embedding error",config=config,recordedAt=now()});
 	abort;
 }
-ceiling = val( env.P00_MAX_USD ?: 0 );
-chatInRate = val( env.P00_CHAT_INPUT_USD_PER_MILLION ?: 0 );
-chatOutRate = val( env.P00_CHAT_OUTPUT_USD_PER_MILLION ?: 0 );
-embeddingRate = val( env.P00_EMBED_USD_PER_MILLION ?: 0 );
-if ( ceiling <= 0 || ceiling > 1 || chatInRate <= 0 || chatOutRate <= 0 || embeddingRate <= 0 ) {
-	println( "BLOCKED: require USD ceiling in (0,1] and positive caller-supplied current USD/M-token rates; no request made" );
-	abort;
-}
-// Conservative fixed budgets: <=64 input tokens for each request and 32 output tokens.
-estimated = ( 64 * chatInRate + 32 * chatOutRate + 64 * embeddingRate ) / 1000000;
-if ( estimated > ceiling ) {
-	println( "BLOCKED: conservative combined cost estimate exceeds P00_MAX_USD; no request made" );
-	abort;
-}
-key = env.OPENAI_API_KEY;
-chat = aiChat(
-	"Reply with exactly: P00_PROVIDER_PROBE_OK",
-	{ model: "gpt-6-luna", max_completion_tokens: 32 },
-	{ provider: "openai", apiKey: key, timeout: 30, returnFormat: "raw", logRequest: false, logResponse: false }
-);
-embedding = aiEmbed(
-	"synthetic phase zero embedding probe",
-	{ model: "text-embedding-3-small" },
-	{ provider: "openai", apiKey: key, timeout: 30, returnFormat: "raw", logRequest: false, logResponse: false }
-);
-vector = embedding.data[ 1 ].embedding;
-if ( vector.len() != 1536 ) throw( message="Embedding dimensions differ from proposed 1536: #vector.len()#" );
-println( "CHAT response=#chat.choices[1].message.content# usage=#chat.usage ?: {}# model=gpt-6-luna endpoint=OpenAI Chat Completions timeout=30s retries=0 estimatedMaxUSD=#estimated#" );
-println( "EMBED model=text-embedding-3-small dimensions=#vector.len()# usage=#embedding.usage ?: {}# estimatedMaxUSD=#estimated#" );

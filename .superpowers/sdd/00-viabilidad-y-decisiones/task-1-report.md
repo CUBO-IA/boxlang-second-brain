@@ -87,10 +87,10 @@ UI: `frontend/app/feasibility.tsx` abre selección de los ocho tipos en un visor
 
 - Tareas (default propuesto): registro durable futuro PostgreSQL; lease 60 s/heartbeat 15 s, 3 intentos con backoff 1/5/15 min y después reintento manual; fence por versionId. Sin cola adicional. Pendiente implementar.
 - Consistencia archivo/DB: staged write + hash; transacción registra versión no-ready en `stored`; rename atómico; transacción marca `ready`. Reconciliación al reinicio: retry rename desde stage; si final tiene hash esperado, ready; falta/mismatch => failed y anterior ready intacta. Limpiar stage huérfano >24 h. Borrado usa tombstone, reanudable/idempotente; nada aparece como listo hasta versión ready.
-- Límites propuestos: 20 archivos por operación; 50 MiB/archivo (acordado), 100 MiB total texto extraído; máximo 8.000 caracteres/fragmento, solape 400, 500 fragmentos/documento; ZIP no admitido. Si se habilita luego, 100 MiB expandidos y 10.000 entradas. Exceder => error explícito y retener versión previa, no truncar.
+- Límites propuestos: 20 archivos por operación; 50 MB = 50,000,000 bytes por archivo, 100 MB = 100,000,000 bytes UTF-8 extraídos; máximo 8,000 Unicode code points/fragmento, solape 400, 500 fragmentos/documento; ZIP no admitido. Si se habilita luego, 100 MB expandidos y 10,000 entradas. Exceder => error explícito y retener versión previa, no truncar.
 - Presupuesto: USD 20/día UTC de especificación, reserva SQL atómica por operación concurrente; liquidar con usage y liberar/conciliar reservas; sin tarifa fechada configurada, no llamar. Errores de uso desconocido retienen reserva provisional. Control de app no limita usos externos de la misma clave. Defaults no implementados.
-- Servidor/backup: HTTPS obligatorio detrás de proxy privado, no exponer puertos app; host/dominio/CPU/RAM intencionalmente no inventados. Backup diario de PostgreSQL más manifiesto/hash y snapshot de originales inmutables coordinados; default RPO 24 h/RTO 4 h, falta ensayo restauración y cifrado/retención por entorno.
-- Carga: protocolo de medición: 1.000 docs/espacio, 30 sesiones concurrentes, documentos 1 MiB y hasta 50 MiB, registrar CPU/RAM/hardware, red, conexión y API/modelo. Gates acordadas p95 preguntas ≤30 s y texto 1 MiB ≤60 s; sin medición, los tamaños grandes aún requieren su propia curva.
+- Servidor/backup: HTTPS obligatorio detrás de proxy privado, no exponer puertos app; host/dominio/CPU/RAM intencionalmente no inventados. Backup diario consistente de PostgreSQL+manifiesto/hash+originales inmutables, cifrado AES-256-GCM fuera del volumen, retención 7 diarios/4 semanales/12 mensuales y ensayo trimestral propuestos. RPO 24 h/RTO 4 h, no medidos.
+- Carga: protocolo de medición con 1,000 docs/espacio, 30 sesiones concurrentes, tamaño 1 MB = 1,000,000 bytes y hasta 50 MB = 50,000,000 bytes, registrar CPU/RAM/hardware, red, conexión y API/modelo. Targets candidatos p95 pregunta ≤30 s, indexación 1 MB ≤60 s, archivos 1–10 MB ≤2 min, >10–25 MB ≤5 min, >25–50 MB ≤10 min; ninguno medido.
 
 ## Manifiesto y rúbrica fija (20)
 
@@ -201,6 +201,141 @@ La prueba con opt-in fue detenida por la guard de key antes de leer respuesta/ab
 
 ### Decisiones, gaps y estado de cierre
 
-Defaults de 00.9 escritos en el plan: 20 archivos/operación, 50 MiB cada uno, 100 MiB texto extraído, fragmento 8.000 chars/overlap 400/máximo 500, archivos comprimidos rechazados (si se habilitan: 100 MiB expandido, 10.000 entries), lease 60 s/heartbeat 15 s, 3 retries + backoff, fence de versionId, archivo immutable + `staging/stored/ready/failed/tombstone`, reconciliación por SHA-256 y anterior ready conservada, temporal huérfano 24 h, presupuesto USD20/día UTC con reserva, acceso privado HTTPS, backup diario coordinado, RPO24 h/RTO4 h provisional. Carga define 1.000 docs, 30 sesiones, 1 MiB y hasta 50 MiB con p95 objetivos existentes. No son valores medidos ni arquitectura productiva; hostname, CPU, RAM, dominio, rates dated requieren dato/decisión externa.
+Defaults de 00.9 escritos en el plan: 20 archivos/operación; **50 MB = 50,000,000 bytes** por archivo; 100 MB = 100,000,000 bytes UTF-8 extraídos; 8,000 Unicode code points/fragmento, overlap 400, máximo 500; comprimidos rechazados (si se habilitan: 100 MB expandidos, 10,000 entradas); lease 60 s/heartbeat 15 s, 3 retries + backoff, fence de versionId, archivo immutable + `staging/stored/ready/failed/tombstone`, reconciliación por SHA-256 y anterior ready conservada, temporal huérfano 24 h, presupuesto USD20/día UTC con reserva. Backup diario PostgreSQL+manifiesto+originales, cifrado AES-256-GCM previo a salida del volumen, retención 7 diarios/4 semanales/12 mensuales, restore conjunto trimestral propuesto; RPO24 h/RTO4 h. Carga define 1,000 docs, 30 sesiones, 1 MB=1,000,000 bytes y bins de archivos 1/2/5/10/25/50 MB; p95 candidato pregunta ≤30 s, indexado 1 MB ≤60 s, >1–10 MB ≤2 min, >10–25 MB ≤5 min y >25–50 MB ≤10 min. Nada se midió. Hostname, CPU, RAM, dominio, red/topología y rates con fecha requieren datos externos, no se inventan.
 
 P00.1 ya pasó en ejecución anterior acreditada (smoke/http); no se repitió porque smoke/backend no cambió. Frontend hizo lint, typecheck y navegador. P00.2 permanece bloqueada por falta de key/model response/embedding/usage/coste. P00.3/4 pasan para integración vectorial instalada en el alcance probado, pero allowlist multi-documento y permisos de negocio no quedan cubiertos. P00.5 pasa para coordenadas de fixture/viewer textual; el viewer nativo y loaders oficiales Office bloquean aprobación integral. P00.6 sigue parcial por gaps indicados. Estado de fase no cambia: **Bloqueada**, Sol debe verificar y hacer bookkeeping final.
+
+## Ronda de corrección 2 — F5/F7/F8/F9, N1–N4 y límite del grafo
+
+Base verificada al iniciar: `bb9da99` en `phase00-viability`. Se conservaron intactos los artefactos `docs/plan/01..09` y `docs/plan/verificacion.md` que ya estaban sin seguimiento. No se instalaron módulos, bibliotecas, runtimes ni servicios; no hubo llamadas OpenAI, credenciales del harness ni pruebas reales con clave. Resultado de esta ronda: correcciones locales completas donde eran ejecutables; **P00.2/P00.3 real de proveedor permanece bloqueado** por falta de clave/tarifa autorizada. Fase sigue **Bloqueada**.
+
+### Evidencia por finding
+
+| Finding | Corrección local efectiva y prueba |
+|---|---|
+| F5 / N1 / N3 | La UI ya no tiene documentos/citas paralelos ni usa `lastIndexOf`. `tests/export-evidence.bxs` ejecuta loaders bx-ai y reutiliza `backend/secondBrain/EvidenceExtractor.bx` para PDFBox + PDF/OOXML acotado/validado; exporta `frontend/app/evidence.generated.json`, consumido por React. Cada fila incluye archivo, versión, SHA-256, texto normalizado, ubicación BoxLang y coordenadas inicio/fin. DOCX lee cada párrafo/orden de runs, su cita única se enlaza a párrafo 2/offset 1 aunque el párrafo 3 repita la misma cadena. El viewer extrae el rango solo por índices exportados. `contracts.mjs` compara hashes con archivos actuales, resuelve las ocho ubicaciones, verifica offsets enteros, inicio/fin en el mismo identificador, quote exacta y las repeticiones; un cambio del fixture contra el hash exportado falla solicitando regeneración. |
+| F7 | PDF/XLSX de evaluación son ahora fixtures binarios reales `tests/fixtures/locations.pdf` y `locations.xlsx`; DOCX/XLSX también se materializan como archivos, y los `.b64` quedan chequeados byte-por-byte. El extractor reutilizable `EvidenceExtractor` limita PDF/Office a 50,000,000 bytes/archivo, 10,000 entradas ZIP, partes XML ≤1,000,000 bytes, deshabilita `DOCTYPE`/entidades externas, no extrae rutas, valida destino/relaciones/celdas y falla explícitamente. La representación normalizada del XLSX muestra hoja/celdas; DOCX párrafos. No se compraron módulos premium ni se afirma que este extractor pequeño implemente todos los features/edge cases Office. |
+| F8 | Plan y defaults actualizados con unidades decimales explícitas, bins/objetivos propuestos >1 MB, cifrado AES-256-GCM previo al backup, retención 7/4/12 y ensayo trimestral. Benchmark/cifrado/restore no se presentan como hechos medidos. Host/dominio/CPU/RAM/red siguen pendiente externa. |
+| F9 / N2 | R03 vuelve a usar fuentes R01+R02 y exige combinar plazo/aprobador. R09 ahora pregunta en inglés a fuente española y tiene follow-up inglés. Cada C01–C04 y D01–D02 tiene dos citas con línea, offsets y quote. A03 excluye explícitamente source+versión 1+status replaced+espacio+coordenada; A04 compara frases casi idénticas `...42`/`...43` en espacios distintos. R04/R07 refieren bytes reales PDF/XLSX y sus SHA-256. `contracts.mjs` verifica hashes, selección, versiones, coordenadas/evidencia y exclusiones. |
+| N4 | Provider probe ahora emite NDJSON machine-readable (`BLOCKED`/`ERROR`/`OBSERVED`/`PASS`) y persiste append-only cada evento a `/tmp/second-brain-provider-probe.ndjson` (sobrescribible mediante `P00_PROVIDER_RECORD_PATH`). Requiere fecha y referencia de tarifa, límites/tasas suministrados, conserva respuesta+usage+config+estimado antes de la siguiente llamada, y contiene embedding 1,536 → tabla aleatoria bx-ai → recuperación filtrada → DROP en `finally`. Sin key, solo se validaron guards; no se invocó ni ejecutó el flujo autorizado ni se atribuye compatibilidad real. |
+| Límite grafo | Grafo local de 10 nodos, visible set calculado con `Set` (expanded + neighbors) para dedupe; expansión solo se habilita si todos los nodos resultantes caben en el tope 8. Chrome expande `policy` y `limits`, ambos alcanzan el mismo `approval` sin duplicarlo y el contador llega a 8/8; botones que harían exceder límite quedan deshabilitados. |
+
+### Comandos, resultados y salidas observadas
+
+Prefijo de contenedor: `FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00` desde `/tmp/opencode/second-brain-phase00`.
+
+**N1/F5/F7 — regeneración desde extracción ejecutable, no fixture duplicado:**
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec -T boxlang boxlang tests/export-evidence.bxs > /tmp/opencode/second-brain-export.stdout
+python3 - <<'PY'
+import json
+from pathlib import Path
+lines=Path('/tmp/opencode/second-brain-export.stdout').read_text().splitlines()
+data=json.loads(next(line for line in reversed(lines) if line.startswith('{')))
+Path('frontend/app/evidence.generated.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+for d in data['documents']: print(d['id'],d['location']['start'],repr(d['location']['quote']),d['sha256'])
+PY
+```
+
+Salida real (8 records):
+
+```text
+extractor="bx-ai loaders + bounded PDFBox/OOXML EvidenceExtractor"
+locations.md {line:3,offset:1} 'repeat phrase' sha256=6e94f4fd7a8865af9c3536129584c094213ddac1d14a3aedb8b266263078a939
+locations.txt {line:3,offset:1} 'Exact TXT target' sha256=d1f4268f5b0c65f20bb0de5f3b2fd152f0facd94401cbab9f2289350ad6d898e
+locations.js {line:3,offset:16} 'Exact CODE target' sha256=75d709575b3c2195b7adfbe373f92fe6479b78dcd831146f8e4fc0bc91abea01
+locations.jsondata {path:policy.maxDays,offset:1} '10' sha256=b502cec39bd90a8b6205dc7cebe66e2087d017a8fb0284b592566bfa1de99703
+locations.csv {row:3,column:limit,offset:1} '40' sha256=156ab85684ab30d3cf84f37544ac276901e726b21dded047bea234abbf937018
+locations.pdf {page:2,offset:1} 'For urgent purchases, attach prior authorization.' sha256=0a60abb347fab948b25ac7008763d7b7832ac726e50b19de53bc25478a6641f5
+locations.docx {paragraph:2,offset:1} 'Exact DOCX target' sha256=b4c176199aa61a4d2eccd8ad61e71b4adad94b361218f1611447d808b8c019d5
+locations.xlsx {sheet:Limits,cell:B2,offset:1} '250' sha256=954b981418130f67401d2d19c6471e7d8bc398353cdeb8707015685a8c037ba7
+```
+
+**F7 — extracción de los eight formatos reales/locales:**
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec boxlang boxlang tests/extraction.bxs
+```
+
+```text
+OK: MD=bx-ai MarkdownLoader; TXT/code=bx-ai TextLoader; JSON=bx-ai JSONLoader; CSV=bx-ai CSVLoader; PDF=bx-ai PDFLoader + PDFBox page 2 exact citation; DOCX=fixture-scoped OOXML ZIP/XML reader; paragraph 2 exact/repeated; XLSX=fixture-scoped OOXML ZIP/XML reader; Limits!B2=250
+```
+
+**F5/N2/F9 — hashes, coordenadas, repeticiones, evaluación congelada:**
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend node /tests/contracts.mjs
+```
+
+```text
+OK: 8 BoxLang-exported source hashes/coordinates; repeated DOCX paragraph 2; stale-export, integer/range guards; 20 fully referenced evaluation cases and source hashes
+```
+
+Negativos específicos dentro de esa misma ejecución: fixture con SHA cambiado rechaza la exportación no regenerada; `end.line=2` tras `start.line=3` se rechaza; offset fraccionario y rango invertido se rechazan. DOCX tiene dos matches textuales y la coordenada de salida resuelve índice de párrafo 2 (index 1 en array); la marca no aparece en párrafo 3.
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec boxlang boxlang tests/location.bxs
+```
+
+```text
+OK: Location validates supported kind, positive coordinates, ordered range and exact quote length
+```
+
+El check BoxLang rechaza línea/página/fila fraccionaria, offset fraccionario, fin en línea anterior, rango invertido y celda XLSX inválida.
+
+**Prueba browser focalizada en `http://127.0.0.1:3001/`:**
+
+Chrome DevTools seleccionó los ocho documentos con el control real y leyó label, cita, contenido exportado y marca. Resultado por formato: `Markdown repeat phrase`, `TXT Exact TXT target`, `JavaScript Exact CODE target`, `JSON 10 @ policy.maxDays`, `CSV 40 @ row3/limit`, `PDF For urgent purchases, attach prior authorization. @ page2`, `DOCX Exact DOCX target @ paragraph2`, `XLSX 250 @ Limits!B2`; en cada caso `marks=1, exactQuote=true`. Snapshot DOCX: `paragraph1 = Header repeated quote / paragraph2 = ⟦Exact DOCX target⟧ / paragraph3 = Exact DOCX target`, demostrando N1 corregido.
+
+Accesibilidad teclado observada: control select → `End`, `Enter` selecciona XLSX y pinta `Limits!B2`; `Escape`, `Tab`, `Enter` expande `policy`; `Tab`, `Enter` expande `limits`; status actualiza `8/8 nodos visibles`, shared `approval` aparece una sola vez, `owner`/`approval`/`retention` que excederían presupuesto quedan disabled. Grafo de 10 IDs, no requiere librería.
+
+**F8 — comandos frontend requeridos:**
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend pnpm lint
+$ eslint
+
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend pnpm exec tsc --noEmit
+(exit 0, sin salida)
+
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec frontend pnpm build
+✓ Compiled successfully in 2.0s; TypeScript finished; dynamic / and static /_not-found emitted
+```
+
+**F3 — multiselección por consultas bx-ai filtradas de forma independiente:**
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec boxlang boxlang tests/probe.bxs
+OK: bx-ai PostgresVectorMemory; B nearest excluded; selected 2/3 docs via per-document pre-ranking filters; top-k score merge/dedupe; empty selection; 2-fragment replace/delete; siblings preserved
+```
+
+La selección A contiene `doc-a` + `sibling`, de 3 documentos/2 espacios; B global es el nearest y no se consulta para el contexto permitido. Se ejecuta una llamada findSimilar por cada docId con `spaceId`+`documentId` en WHERE, luego score-desc merge, dedupe id y top-k 10. Entrada vacía retorna `[]` antes de consultar. Fault injection por omitir filtros:
+
+```text
+exec -e P00_PROBE_FAULT=space ... tests/probe.bxs -> exit 1: Space filter missing from bx-ai retrieval
+exec -e P00_PROBE_FAULT=selection ... tests/probe.bxs -> exit 1: Multi-document selection/merge/dedupe failed: a-2,a-1,sibling-1
+exec -e P00_PROBE_FAULT=replace ... tests/probe.bxs -> exit 1: Expected all old document fragments to be removed
+exec -e P00_PROBE_FAULT=delete ... tests/probe.bxs -> exit 1: Deleted document still has vectors
+```
+
+Son controles negativos deliberados, cada uno creó y limpió su propia tabla aleatoria de bx-ai. El filtro multi-documento no bloquea técnicamente: se satisface por consultas escalares independientes, no se sustituyó bx-ai.
+
+**N4 — provider guard machine-readable; todas las pruebas cortadas antes de la red:**
+
+```sh
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec -e P00_PROVIDER_RECORD_PATH=/tmp/p00-round2-no-opt-in.ndjson boxlang boxlang tests/provider.bxs
+{"reason":"P00_ALLOW_PROVIDER_CALLS must equal YES","passed":false,"requestsMade":0,"status":"BLOCKED"}
+
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec -e P00_ALLOW_PROVIDER_CALLS=YES -e P00_PROVIDER_RECORD_PATH=/tmp/p00-round2-no-key.ndjson boxlang boxlang tests/provider.bxs
+{"reason":"OPENAI_API_KEY absent","passed":false,"requestsMade":0,"status":"BLOCKED"}
+
+FRONTEND_PORT=3001 BACKEND_PORT=8081 POSTGRES_PORT=55434 docker compose -p second-brain-phase00 exec -e P00_ALLOW_PROVIDER_CALLS=YES -e OPENAI_API_KEY=P00_GUARD_ONLY_NON_CREDENTIAL -e P00_PRICE_DATE=2026-10-11 -e P00_PRICE_REFERENCE=guard-only-not-a-tariff -e P00_MAX_USD=0.001 -e P00_CHAT_INPUT_USD_PER_MILLION=1000000 -e P00_CHAT_OUTPUT_USD_PER_MILLION=1000000 -e P00_EMBED_USD_PER_MILLION=1000000 -e P00_PROVIDER_RECORD_PATH=/tmp/p00-round2-over-budget.ndjson boxlang boxlang tests/provider.bxs
+{"reason":"Conservative combined estimate exceeds configured ceiling","passed":false,"requestsMade":0,"status":"BLOCKED"}
+```
+
+El último valor de key es un sentinel usado solo en un caso cerrado obligatoriamente por el preflight (>ceiling); no es una credencial y no llegó a aiChat/aiEmbed. La ejecución paralela simultánea de dos BoxLang launches tuvo un race de inicio del runtime copiando `version.properties`; repetir el caso sin concurrencia produjo el JSON `BLOCKED` anterior. Registro del caso sin key leído de disco con `cat /tmp/p00-round2-no-key.ndjson`: exactamente el mismo evento JSON. No hubo request externa. Sin clave no se acreditan dimensión, compatibilidad, usage ni coste reales. Fechas/rates no se atribuyen como tarifas actuales; referencias/rates del caso sentinela son solo guards.
+
+### Decisiones externas y estado final
+
+50 MB/1 MB usan base decimal explícita. Objetivos de indexación por bins y backup cifrado/retención están acordados como propuestas para implementación, no resultados de benchmark ni servicio backup existente. Falta hardware/host/dominio/red para convertirlos en capacidad garantizada; falta key/model endpoint autorizado y tarifa fechada para provider. No hay falla local evitada/re-etiquetada en esta ronda; la única razón restante para no validar real P00.2/00.3 es ausencia de acceso autorizado. P00.5 y manifiesto pasan **para fixtures/representación normalizada local**; no se proclama un parser universal Office o fase 06 aprobada. Sol debe volver a revisar antes de cualquier cambio a Verificada.
